@@ -6,6 +6,21 @@ Keep Claude Code and Codex configuration in sync.
 symlinks. It works with any local directory, including repositories and mounted
 sync services. It does not depend on Git or a storage provider.
 
+Shared files live in `.agents`; each agent directory links to them:
+
+```text
+.agents/
+└── skills/
+    ├── review/
+    │   └── SKILL.md
+    └── search/
+        └── SKILL.md
+.claude/
+└── skills -> ../.agents/skills
+.codex/
+└── skills -> ../.agents/skills
+```
+
 ## Install
 
 ```sh
@@ -61,6 +76,37 @@ refuses to replace it until `--force --apply` is supplied. The selected root
 must be a regular file or directory inside the project. Relative links inside a
 copied tree are dereferenced only when they stay inside the project; external
 links and an unmanaged linked root are refused.
+
+## Normalizers
+
+Claude Code and Codex express the same intent differently: headings name the
+tool, and skill frontmatter carries keys only one tool understands. Compared
+byte for byte, equivalent files look like drift. Normalizers remove these
+surface differences before comparing.
+
+`instructions` treats these headings as equal:
+
+```markdown
+# Claude Code instructions
+# Codex instructions
+```
+
+`skill` drops tool-only frontmatter keys, so these compare equal:
+
+```yaml
+---
+name: review
+description: Review a pull request
+allowed-tools: [Bash, Read]
+---
+```
+
+```yaml
+---
+name: review
+description: Review a pull request
+---
+```
 
 ## Configure
 
