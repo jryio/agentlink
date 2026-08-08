@@ -13,12 +13,23 @@ type Set struct {
 	patterns [][]string
 }
 
+// maxComponents caps the number of path components in a single compiled
+// pattern, keeping per-entry matching work proportional to a bounded pattern
+// length (CWE-400).
+const maxComponents = 128
+
 // Compile validates patterns and returns a matcher.
 func Compile(patterns []string) (Set, error) {
 	set := Set{patterns: make([][]string, 0, len(patterns))}
 	for _, raw := range patterns {
 		clean := strings.TrimPrefix(path.Clean(raw), "./")
 		parts := strings.Split(clean, "/")
+		// Cap components so a repository-controlled pattern cannot force
+		// unbounded per-entry matching work; match() allocates proportional to
+		// len(pattern) (CWE-400).
+		if len(parts) > maxComponents {
+			return Set{}, fmt.Errorf("%q: too many path components (max %d)", raw, maxComponents)
+		}
 		for _, part := range parts {
 			if strings.Contains(part, "**") && part != "**" {
 				return Set{}, fmt.Errorf("%q: ** must be a complete path component", raw)

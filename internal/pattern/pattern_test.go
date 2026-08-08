@@ -42,6 +42,29 @@ func TestCompileRejectsPartialDoubleStar(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsExcessiveComponents(t *testing.T) {
+	t.Parallel()
+
+	parts := make([]string, maxComponents+1)
+	for i := range parts {
+		parts[i] = "a"
+	}
+	pattern := strings.Join(parts, "/")
+	if _, err := Compile([]string{pattern}); err == nil {
+		t.Fatal("Compile(<excessive components>) succeeded, want error")
+	}
+
+	// One at the ceiling is still accepted.
+	atLimit := strings.Join(parts[:maxComponents], "/")
+	set, err := Compile([]string{atLimit})
+	if err != nil {
+		t.Fatalf("Compile(at limit): %v", err)
+	}
+	if !set.Match(atLimit) {
+		t.Fatal("Compile(at limit).Match(at limit) = false, want true")
+	}
+}
+
 func TestMatchRepeatedDoubleStar(t *testing.T) {
 	t.Parallel()
 
