@@ -82,6 +82,11 @@ tasks:
     cmds:
       - go test -short -race -shuffle=on {{.PKG}}
 
+  test:e2e:
+    desc: End-to-end CLI safety loop
+    cmds:
+      - go test -race -count=1 -run='^TestCLIEndToEnd$' ./internal/app
+
   test:integration:
     desc: Integration tests (build tag)
     cmds:
