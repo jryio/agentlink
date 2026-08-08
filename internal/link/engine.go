@@ -17,6 +17,8 @@ import (
 	"github.com/jryio/agentlink/internal/safefs"
 )
 
+const maxConcurrentChecks = 8
+
 // State classifies a peer-artifact comparison.
 type State string
 
@@ -143,12 +145,7 @@ func (e *Engine) Check(ctx context.Context, selected map[string]bool) Report {
 			return e.checkMCP(server)
 		})
 	}
-	results := make([]PairReport, len(tasks))
-	var wait sync.WaitGroup
-	for i, task := range tasks {
-		wait.Go(func() { results[i] = task() })
-	}
-	wait.Wait()
+	results := runTasks(tasks)
 	activationTasks := make([]func() ActivationReport, 0, len(e.doc.Config.Activations))
 	for _, activation := range e.doc.Config.Activations {
 		if len(selected) > 0 && !selected[activation.ID] {
@@ -161,12 +158,27 @@ func (e *Engine) Check(ctx context.Context, selected map[string]bool) Report {
 			return e.checkActivation(activation)
 		})
 	}
-	activations := make([]ActivationReport, len(activationTasks))
-	for i, task := range activationTasks {
-		wait.Go(func() { activations[i] = task() })
-	}
-	wait.Wait()
+	activations := runTasks(activationTasks)
 	return Report{Pairs: results, Activations: activations}
+}
+
+func runTasks[T any](tasks []func() T) []T {
+	results := make([]T, len(tasks))
+	jobs := make(chan int)
+	var wait sync.WaitGroup
+	for range min(maxConcurrentChecks, len(tasks)) {
+		wait.Go(func() {
+			for i := range jobs {
+				results[i] = tasks[i]()
+			}
+		})
+	}
+	for i := range tasks {
+		jobs <- i
+	}
+	close(jobs)
+	wait.Wait()
+	return results
 }
 
 func (e *Engine) checkPair(ctx context.Context, runtime pairRuntime) PairReport {
@@ -267,8 +279,8 @@ func (e *Engine) checkTree(
 ) PairReport {
 	pair := runtime.pair
 	report := PairReport{ID: pair.ID, Name: pairName(pair)}
-	claudeFiles, claudeExists, claudeErr := treeFiles(claudeRoot, pair.Claude.Path, e.doc.Config.MaxFiles(), runtime.ignored)
-	codexFiles, codexExists, codexErr := treeFiles(codexRoot, pair.Codex.Path, e.doc.Config.MaxFiles(), runtime.ignored)
+	claudeFiles, claudeExists, claudeIgnored, claudeErr := treeFiles(claudeRoot, pair.Claude.Path, e.doc.Config.MaxFiles(), runtime.ignored)
+	codexFiles, codexExists, codexIgnored, codexErr := treeFiles(codexRoot, pair.Codex.Path, e.doc.Config.MaxFiles(), runtime.ignored)
 	if claudeErr != nil {
 		report.Findings = append(report.Findings, e.finding(pair, ".", StateError, claudeRoot, codexRoot, claudeErr.Error()))
 		return report
@@ -311,7 +323,7 @@ func (e *Engine) checkTree(
 		}
 		report.Files++
 	}
-	if len(paths) == 0 && claudeExists != codexExists && !pair.Optional {
+	if len(paths) == 0 && claudeExists != codexExists && !claudeIgnored && !codexIgnored {
 		state := StateMissingCodex
 		if !claudeExists {
 			state = StateMissingClaude
@@ -371,19 +383,29 @@ func (e *Engine) compareFile(
 	return nil
 }
 
-func treeFiles(root *safefs.Root, base string, maxFiles int, ignored pattern.Set) (map[string]safefs.File, bool, error) {
-	files, err := root.WalkFiles(base, maxFiles, ignored.Match)
+func treeFiles(
+	root *safefs.Root,
+	base string,
+	maxFiles int,
+	ignored pattern.Set,
+) (map[string]safefs.File, bool, bool, error) {
+	ignoredAny := false
+	files, err := root.WalkFiles(base, maxFiles, func(rel string) bool {
+		matched := ignored.Match(rel)
+		ignoredAny = ignoredAny || matched
+		return matched
+	})
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	if err != nil {
-		return nil, true, err
+		return nil, true, ignoredAny, err
 	}
 	result := make(map[string]safefs.File, len(files))
 	for _, file := range files {
 		result[file.Path] = file
 	}
-	return result, true, nil
+	return result, true, ignoredAny, nil
 }
 
 func (e *Engine) finding(

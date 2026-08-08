@@ -145,3 +145,31 @@ func TestSyncPreviewBlocksSymlinkCopies(t *testing.T) {
 		t.Fatalf("PlanSync() = %+v, want symlink copy blocked in preview", plan)
 	}
 }
+
+func TestPlanSyncRejectsDuplicateTargets(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "claude", "one.md"), "one\n")
+	writeTestFile(t, filepath.Join(dir, "claude", "two.md"), "two\n")
+	doc := testDocument(dir)
+	doc.Config.Pairs = []config.Pair{
+		{
+			ID: "one", Kind: "file", Normalizer: "exact", Sync: "copy",
+			Claude: config.Endpoint{Source: "workspace", Path: "claude/one.md"},
+			Codex:  config.Endpoint{Source: "workspace", Path: "codex/shared.md"},
+		},
+		{
+			ID: "two", Kind: "file", Normalizer: "exact", Sync: "copy",
+			Claude: config.Endpoint{Source: "workspace", Path: "claude/two.md"},
+			Codex:  config.Endpoint{Source: "workspace", Path: "codex/shared.md"},
+		},
+	}
+	engine, closeEngine := newEngine(t, doc)
+	t.Cleanup(closeEngine)
+
+	_, err := engine.PlanSync(t.Context(), SideClaude, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "target the same path") {
+		t.Fatalf("PlanSync() error = %v, want duplicate target rejection", err)
+	}
+}

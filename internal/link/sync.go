@@ -96,6 +96,9 @@ func (e *Engine) PlanSync(ctx context.Context, from Side, prune bool, selected m
 			}
 		}
 	}
+	if err := validateOperationTargets(plan.Operations); err != nil {
+		return Plan{}, err
+	}
 	slices.SortFunc(plan.Operations, func(a, b Operation) int {
 		if a.Pair != b.Pair {
 			return cmpString(a.Pair, b.Pair)
@@ -106,6 +109,22 @@ func (e *Engine) PlanSync(ctx context.Context, from Side, prune bool, selected m
 		return cmpString(string(a.Kind), string(b.Kind))
 	})
 	return plan, nil
+}
+
+func validateOperationTargets(operations []Operation) error {
+	targets := make(map[string]Operation, len(operations))
+	for _, operation := range operations {
+		if previous, exists := targets[operation.Target]; exists {
+			return fmt.Errorf(
+				"sync pairs %q and %q target the same path %s",
+				previous.Pair,
+				operation.Pair,
+				operation.Target,
+			)
+		}
+		targets[operation.Target] = operation
+	}
+	return nil
 }
 
 func copyAllowed(pair config.Pair) bool {

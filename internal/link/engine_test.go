@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/jryio/agentlink/internal/config"
 	"github.com/jryio/agentlink/internal/safefs"
@@ -179,14 +181,16 @@ TASKS_TOKEN = "codex-secret"
 	}
 }
 
-func TestSyncCreatesEmptyCounterpartTree(t *testing.T) {
+func TestSyncCreatesEmptyOptionalCounterpartTree(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "claude", "skills"), 0o750); err != nil {
 		t.Fatalf("os.MkdirAll(claude skills): %v", err)
 	}
-	engine, closeEngine := newTestEngine(t, dir)
+	doc := testDocument(dir)
+	doc.Config.Pairs[1].Optional = true
+	engine, closeEngine := newEngine(t, doc)
 	t.Cleanup(closeEngine)
 	selected := map[string]bool{"skills": true}
 	plan, err := engine.PlanSync(t.Context(), SideClaude, false, selected)
@@ -242,6 +246,36 @@ func TestCanceledCheckReportsEveryCheck(t *testing.T) {
 	if got, want := report.FindingCount(), 4; got != want {
 		t.Fatalf("canceled FindingCount() = %d, want %d: %+v", got, want, report)
 	}
+}
+
+func TestRunTasksBoundsConcurrency(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{}, maxConcurrentChecks+1)
+		release := make(chan struct{})
+		tasks := make([]func() int, maxConcurrentChecks+1)
+		for i := range tasks {
+			tasks[i] = func() int {
+				started <- struct{}{}
+				<-release
+				return i
+			}
+		}
+		var wait sync.WaitGroup
+		wait.Go(func() { runTasks(tasks) })
+		for range maxConcurrentChecks {
+			<-started
+		}
+		synctest.Wait()
+		select {
+		case <-started:
+			t.Fatalf("runTasks() started more than %d tasks", maxConcurrentChecks)
+		default:
+		}
+		close(release)
+		wait.Wait()
+	})
 }
 
 func TestPairAcrossIndependentSourceRoots(t *testing.T) {
@@ -335,7 +369,11 @@ func TestSemanticSyncIsManualByDefault(t *testing.T) {
 
 func newTestEngine(t testing.TB, dir string) (*Engine, func()) {
 	t.Helper()
-	doc := testDocument(dir)
+	return newEngine(t, testDocument(dir))
+}
+
+func newEngine(t testing.TB, doc *config.Document) (*Engine, func()) {
+	t.Helper()
 	roots, err := safefs.Open(doc)
 	if err != nil {
 		t.Fatalf("safefs.Open(): %v", err)
