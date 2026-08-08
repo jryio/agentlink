@@ -46,19 +46,44 @@ func (s Set) Match(name string) bool {
 	return false
 }
 
+// match reports whether pattern matches name. Each ** component forks into
+// "advance the pattern" and "consume a path component", so overlapping
+// subproblems recur. Memoizing on (pattern index, name index) collapses that
+// branching into polynomial work bounded by len(pattern) * len(name), instead
+// of re-solving shared states for every walked entry (CWE-400).
 func match(pattern, name []string) bool {
-	if len(pattern) == 0 {
-		return len(name) == 0
-	}
-	if pattern[0] == "**" {
-		if match(pattern[1:], name) {
-			return true
+	// memo[i][j] is the cached result of match(pattern[i:], name[j:]):
+	// -1 unknown, 0 false, 1 true.
+	memo := make([][]int8, len(pattern)+1)
+	for i := range memo {
+		memo[i] = make([]int8, len(name)+1)
+		for j := range memo[i] {
+			memo[i][j] = -1
 		}
-		return len(name) > 0 && match(pattern, name[1:])
 	}
-	if len(name) == 0 {
-		return false
+	var rec func(i, j int) bool
+	rec = func(i, j int) bool {
+		if cached := memo[i][j]; cached != -1 {
+			return cached == 1
+		}
+		var result bool
+		switch {
+		case i == len(pattern):
+			result = j == len(name)
+		case pattern[i] == "**":
+			result = rec(i+1, j) || (j < len(name) && rec(i, j+1))
+		case j == len(name):
+			result = false
+		default:
+			ok, err := path.Match(pattern[i], name[j])
+			result = err == nil && ok && rec(i+1, j+1)
+		}
+		if result {
+			memo[i][j] = 1
+		} else {
+			memo[i][j] = 0
+		}
+		return result
 	}
-	ok, err := path.Match(pattern[0], name[0])
-	return err == nil && ok && match(pattern[1:], name[1:])
+	return rec(0, 0)
 }
