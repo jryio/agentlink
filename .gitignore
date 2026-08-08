@@ -1,0 +1,32 @@
+# Binaries
+/bin/
+/dist/
+/custom-gcl
+/custom-gcl.exe
+
+# Coverage
+coverage.out
+coverage.html
+/cov/
+
+# Profiles
+*.prof
+*.pprof
+default.pgo.bak
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Env
+.env
+.env.local
+
+# Build artifacts
+*.exe
+*.test
+
+# Task cache
+.task/

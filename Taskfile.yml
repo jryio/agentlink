@@ -1,0 +1,144 @@
+version: "3"
+
+vars:
+  MODULE:
+    sh: go list -m
+  BIN_DIR: bin
+  COVER_FILE: coverage.out
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  LDFLAGS: -s -w -X main.version={{.VERSION}}
+  PKG: ./...
+  CUSTOM_GCL: ./custom-gcl
+
+env:
+  CGO_ENABLED: "0"
+  GOTOOLCHAIN: local
+
+tasks:
+  default:
+    desc: Run lint, vet, test
+    cmds:
+      - task: lint
+      - task: vet
+      - task: test
+
+  tools:
+    desc: Install module-pinned tools listed in go.mod
+    cmds:
+      - go mod download
+      - go install tool
+
+  tidy:
+    desc: go mod tidy + verify
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  fmt:
+    desc: Format with gofumpt
+    cmds:
+      - go tool gofumpt -w .
+
+  vet:
+    desc: go vet
+    cmds:
+      - go vet {{.PKG}}
+
+  lint:build:
+    desc: Build custom golangci-lint binary with NilAway plugin
+    sources:
+      - .custom-gcl.yml
+      - go.mod
+    generates:
+      - "{{.CUSTOM_GCL}}"
+    cmds:
+      - go tool golangci-lint custom
+
+  lint:
+    desc: golangci-lint (with NilAway via custom-gcl)
+    deps: [lint:build]
+    cmds:
+      - "{{.CUSTOM_GCL}} run {{.PKG}}"
+
+  lint:fix:
+    desc: golangci-lint --fix (with NilAway via custom-gcl)
+    deps: [lint:build]
+    cmds:
+      - "{{.CUSTOM_GCL}} run --fix {{.PKG}}"
+
+  modernize:
+    desc: Apply go fix modernizers (Go 1.26+)
+    cmds:
+      - go fix {{.PKG}}
+
+  test:
+    desc: Unit tests with race + shuffle
+    cmds:
+      - go test -race -shuffle=on -timeout=120s {{.PKG}}
+
+  test:short:
+    desc: Short tests only
+    cmds:
+      - go test -short -race -shuffle=on {{.PKG}}
+
+  test:integration:
+    desc: Integration tests (build tag)
+    cmds:
+      - go test -tags=integration -race -timeout=20m {{.PKG}}
+
+  cover:
+    desc: Coverage report (HTML at coverage.html)
+    cmds:
+      - go test -race -shuffle=on -covermode=atomic -coverprofile={{.COVER_FILE}} -coverpkg={{.PKG}} {{.PKG}}
+      - go tool cover -func={{.COVER_FILE}} | tail -n 1
+      - go tool cover -html={{.COVER_FILE}} -o coverage.html
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - go test -run='^$' -bench=. -benchmem -count=10 {{.PKG}}
+
+  fuzz:
+    desc: Run a short fuzz smoke (set FUZZ=FuzzName, optional TIME=30s)
+    vars:
+      TIME: '{{.TIME | default "30s"}}'
+    cmds:
+      - go test -run='^$' -fuzz={{.FUZZ}} -fuzztime={{.TIME}} {{.PKG}}
+
+  vuln:
+    desc: govulncheck
+    cmds:
+      - go tool govulncheck {{.PKG}}
+
+  build:
+    desc: Build all binaries under cmd/ to ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -trimpath -ldflags="{{.LDFLAGS}}" -tags=timetzdata -o {{.BIN_DIR}}/ ./cmd/...
+
+  run:
+    desc: "Run a binary: task run -- <name> [args...]"
+    cmds:
+      - go run ./cmd/{{.CLI_ARGS}}
+
+  install:
+    desc: Install binaries to GOBIN
+    cmds:
+      - go install -trimpath -ldflags="{{.LDFLAGS}}" -tags=timetzdata ./cmd/...
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}} dist coverage.out coverage.html cov *.prof
+      - rm -f {{.CUSTOM_GCL}} custom-gcl.exe
+
+  ci:
+    desc: Full CI pipeline (what GitHub Actions runs)
+    cmds:
+      - task: tidy
+      - task: lint
+      - task: vet
+      - task: vuln
+      - task: cover
+      - task: build
