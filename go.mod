@@ -1,8 +1,8 @@
 module github.com/jryio/agentlink
 
-go 1.25.0
+go 1.25.12
 
-toolchain go1.26.0
+toolchain go1.26.5
 
 tool (
 	github.com/golangci/golangci-lint/v2/cmd/golangci-lint

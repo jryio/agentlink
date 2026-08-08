@@ -13,7 +13,6 @@ vars:
 
 env:
   CGO_ENABLED: "0"
-  GOTOOLCHAIN: local
 
 tasks:
   default:
