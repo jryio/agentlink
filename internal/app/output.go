@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jryio/agentlink/internal/config"
 	"github.com/jryio/agentlink/internal/link"
@@ -40,13 +41,13 @@ func (a *application) printReport(report link.Report) error {
 		files += pair.Files
 		if pair.Skipped {
 			skipped++
-			output.printf("○ %-20s skipped — %s\n", pair.ID, pair.Reason)
+			output.printf("○ %-20s skipped — %s\n", pair.ID, escapeTerminal(pair.Reason))
 		}
 		for _, finding := range pair.Findings {
-			output.printf("× %-20s %-15s %s\n", pair.ID, finding.State, displayRelative(finding.Relative))
-			output.printf("  Claude  %s\n  Codex   %s\n", finding.Claude, finding.Codex)
+			output.printf("× %-20s %-15s %s\n", pair.ID, finding.State, escapeTerminal(displayRelative(finding.Relative)))
+			output.printf("  Claude  %s\n  Codex   %s\n", escapeTerminal(finding.Claude), escapeTerminal(finding.Codex))
 			if finding.Detail != "" {
-				output.printf("  %s\n", finding.Detail)
+				output.printf("  %s\n", escapeTerminal(finding.Detail))
 			}
 		}
 	}
@@ -54,12 +55,12 @@ func (a *application) printReport(report link.Report) error {
 		switch {
 		case activation.Skipped:
 			skipped++
-			output.printf("○ %-20s skipped — %s\n", activation.ID, activation.Detail)
+			output.printf("○ %-20s skipped — %s\n", activation.ID, escapeTerminal(activation.Detail))
 		case activation.State != "":
 			output.printf("× %-20s %-15s\n", activation.ID, activation.State)
-			output.printf("  Expected  %s\n  Live      %s\n", activation.Expected, activation.Live)
+			output.printf("  Expected  %s\n  Live      %s\n", escapeTerminal(activation.Expected), escapeTerminal(activation.Live))
 			if activation.Detail != "" {
-				output.printf("  %s\n", activation.Detail)
+				output.printf("  %s\n", escapeTerminal(activation.Detail))
 			}
 		}
 	}
@@ -92,15 +93,15 @@ func (a *application) printPlan(plan link.Plan, applying bool) error {
 	for _, operation := range plan.Operations {
 		switch operation.Kind {
 		case link.OperationCopy:
-			output.printf("COPY    %s:%s\n        %s\n     →  %s\n", operation.Pair, displayRelative(operation.Relative), operation.Source, operation.Target)
+			output.printf("COPY    %s:%s\n        %s\n     →  %s\n", operation.Pair, escapeTerminal(displayRelative(operation.Relative)), escapeTerminal(operation.Source), escapeTerminal(operation.Target))
 		case link.OperationDelete:
-			output.printf("DELETE  %s:%s\n        %s\n", operation.Pair, displayRelative(operation.Relative), operation.Target)
+			output.printf("DELETE  %s:%s\n        %s\n", operation.Pair, escapeTerminal(displayRelative(operation.Relative)), escapeTerminal(operation.Target))
 		case link.OperationMkdir:
-			output.printf("MKDIR   %s\n", operation.Target)
+			output.printf("MKDIR   %s\n", escapeTerminal(operation.Target))
 		}
 	}
 	for _, finding := range plan.Unresolved {
-		output.printf("BLOCKED %s:%s — %s\n", finding.Pair, displayRelative(finding.Relative), finding.Detail)
+		output.printf("BLOCKED %s:%s — %s\n", finding.Pair, escapeTerminal(displayRelative(finding.Relative)), escapeTerminal(finding.Detail))
 	}
 	switch {
 	case len(plan.Operations) == 0 && len(plan.Unresolved) == 0:
@@ -132,9 +133,9 @@ func (a *application) printGuard(violations []link.Violation, agent string, remi
 			contextOutput.printf("agentlink blocked this change:\n")
 		}
 		for _, violation := range violations {
-			contextOutput.printf("- %s:%s: %s", violation.Pair, displayRelative(violation.Relative), violation.Message)
+			contextOutput.printf("- %s:%s: %s", violation.Pair, escapeTerminal(displayRelative(violation.Relative)), escapeTerminal(violation.Message))
 			if violation.Counterpart != "" {
-				contextOutput.printf("; update %s", violation.Counterpart)
+				contextOutput.printf("; update %s", escapeTerminal(violation.Counterpart))
 			}
 			contextOutput.printf("\n")
 		}
@@ -272,6 +273,77 @@ func displayRelative(relative string) string {
 		return "(root)"
 	}
 	return relative
+}
+
+// escapeTerminal renders repository- and configuration-controlled text so
+// terminal control bytes are visibly escaped rather than interpreted.
+// Filesystem names, configured paths, and diagnostic text cross an
+// attacker-controlled input boundary, so they must be data-only at human and
+// agent-hook output sinks (CWE-150).
+func escapeTerminal(value string) string {
+	if !hasTerminalControl(value) {
+		return value
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	for i := 0; i < len(value); {
+		r, size := utf8.DecodeRuneInString(value[i:])
+		if r == utf8.RuneError && size == 1 {
+			// Invalid UTF-8 byte (for example a bare C1 byte such as OSC).
+			// Filenames are byte strings, not necessarily valid UTF-8.
+			if c := value[i]; isTerminalControlByte(c) {
+				fmt.Fprintf(&b, `\x%02x`, c)
+			} else {
+				b.WriteByte(c)
+			}
+			i++
+			continue
+		}
+		if isTerminalControl(r) {
+			fmt.Fprintf(&b, `\x%02x`, r)
+		} else {
+			b.WriteString(value[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
+}
+
+func escapePaths(values []string) []string {
+	out := make([]string, len(values))
+	for i, value := range values {
+		out[i] = escapeTerminal(value)
+	}
+	return out
+}
+
+func hasTerminalControl(value string) bool {
+	for i := 0; i < len(value); {
+		r, size := utf8.DecodeRuneInString(value[i:])
+		if r == utf8.RuneError && size == 1 {
+			if isTerminalControlByte(value[i]) {
+				return true
+			}
+			i++
+			continue
+		}
+		if isTerminalControl(r) {
+			return true
+		}
+		i += size
+	}
+	return false
+}
+
+func isTerminalControl(r rune) bool {
+	// C0 controls (0x00-0x1F) include ESC, which begins terminal escape
+	// sequences; DEL is 0x7F. C1 controls (0x80-0x9F code points) carry
+	// OSC/CSI/APC terminators used to rewrite or query terminal state.
+	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+}
+
+func isTerminalControlByte(c byte) bool {
+	return c < 0x20 || c == 0x7f || (c >= 0x80 && c <= 0x9f)
 }
 
 func mapsKeys(values map[string]string) []string {

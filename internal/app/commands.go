@@ -180,7 +180,7 @@ func (a *application) runList(args []string) error {
 		}{doc.Path, doc.Roots, doc.Config.Pairs, doc.Config.MCPServers, doc.Config.Activations, doc.Config.Exceptions})
 	}
 	output := printer{writer: a.streams.Out}
-	output.printf("Config  %s\n\nSources\n", doc.Path)
+	output.printf("Config  %s\n\nSources\n", escapeTerminal(doc.Path))
 	names := make([]string, 0, len(doc.Roots))
 	for name := range doc.Roots {
 		names = append(names, name)
@@ -191,28 +191,28 @@ func (a *application) runList(args []string) error {
 		if doc.Config.Sources[name].Optional {
 			optional = " (optional)"
 		}
-		output.printf("  %-18s %s%s\n", name, doc.Roots[name], optional)
+		output.printf("  %-18s %s%s\n", name, escapeTerminal(doc.Roots[name]), optional)
 	}
 	output.println("\nPairs")
 	for _, pair := range doc.Config.Pairs {
-		output.printf("  %-18s %-4s %s:%s ↔ %s:%s\n", pair.ID, pair.Kind, pair.Claude.Source, pair.Claude.Path, pair.Codex.Source, pair.Codex.Path)
+		output.printf("  %-18s %-4s %s:%s ↔ %s:%s\n", pair.ID, pair.Kind, escapeTerminal(pair.Claude.Source), escapeTerminal(pair.Claude.Path), escapeTerminal(pair.Codex.Source), escapeTerminal(pair.Codex.Path))
 	}
 	if len(doc.Config.MCPServers) > 0 {
 		output.println("\nMCP wiring")
 		for _, server := range doc.Config.MCPServers {
-			output.printf("  %-18s %s:%s ↔ %s:%s\n", server.ID, server.Claude.Config.Path, server.Claude.Server, server.Codex.Config.Path, server.Codex.Server)
+			output.printf("  %-18s %s:%s ↔ %s:%s\n", server.ID, escapeTerminal(server.Claude.Config.Path), escapeTerminal(server.Claude.Server), escapeTerminal(server.Codex.Config.Path), escapeTerminal(server.Codex.Server))
 		}
 	}
 	if len(doc.Config.Activations) > 0 {
 		output.println("\nLive activations")
 		for _, activation := range doc.Config.Activations {
-			output.printf("  %-18s %s:%s ← %s:%s\n", activation.ID, activation.Live.Source, activation.Live.Path, activation.Expected.Source, activation.Expected.Path)
+			output.printf("  %-18s %s:%s ← %s:%s\n", activation.ID, escapeTerminal(activation.Live.Source), escapeTerminal(activation.Live.Path), escapeTerminal(activation.Expected.Source), escapeTerminal(activation.Expected.Path))
 		}
 	}
 	if len(doc.Config.Exceptions) > 0 {
 		output.println("\nIntentional divergences")
 		for _, exception := range doc.Config.Exceptions {
-			output.printf("  %s %s — %s\n", exception.Pair, strings.Join(exception.Paths, ", "), exception.Reason)
+			output.printf("  %s %s — %s\n", exception.Pair, strings.Join(escapePaths(exception.Paths), ", "), escapeTerminal(exception.Reason))
 		}
 	}
 	return output.err
@@ -233,7 +233,7 @@ func (a *application) runValidate(args []string) error {
 		return writeJSON(a.streams.Out, map[string]any{"config": doc.Path, "valid": true})
 	}
 	output := printer{writer: a.streams.Out}
-	output.printf("✓ valid %s\n", doc.Path)
+	output.printf("✓ valid %s\n", escapeTerminal(doc.Path))
 	return output.err
 }
 
@@ -263,7 +263,7 @@ func (a *application) runDoctor(args []string) (err error) {
 		})
 	}
 	output := printer{writer: a.streams.Out}
-	output.printf("✓ config  %s\n", doc.Path)
+	output.printf("✓ config  %s\n", escapeTerminal(doc.Path))
 	names := mapsKeys(doc.Roots)
 	slices.Sort(names)
 	for _, name := range names {
@@ -271,7 +271,7 @@ func (a *application) runDoctor(args []string) (err error) {
 		if !roots.Available(name) {
 			mark = "○"
 		}
-		output.printf("%s source  %-18s %s\n", mark, name, doc.Roots[name])
+		output.printf("%s source  %-18s %s\n", mark, name, escapeTerminal(doc.Roots[name]))
 	}
 	output.printf("✓ schema  version %d\n", config.CurrentVersion)
 	return output.err
@@ -330,7 +330,7 @@ func (a *application) runInit(args []string) error {
 		return writeJSON(a.streams.Out, map[string]string{"config": configPath, "schema": schemaPath})
 	}
 	output := printer{writer: a.streams.Out}
-	output.printf("✓ created %s\n✓ created %s\n\nNext: edit the pairs, then run `agentlink check`.\n", configPath, schemaPath)
+	output.printf("✓ created %s\n✓ created %s\n\nNext: edit the pairs, then run `agentlink check`.\n", escapeTerminal(configPath), escapeTerminal(schemaPath))
 	return output.err
 }
 
