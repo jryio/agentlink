@@ -197,6 +197,25 @@ func TestLoadRejectsAliasedAndOverlappingEndpoints(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsOverlappingEndpointsThroughSourceSymlink(t *testing.T) {
+	t.Parallel()
+
+	realRoot := t.TempDir()
+	aliasDir := t.TempDir()
+	aliasRoot := filepath.Join(aliasDir, "alias")
+	if err := os.Symlink(realRoot, aliasRoot); err != nil {
+		t.Skipf("os.Symlink() unavailable: %v", err)
+	}
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "agentlink.yaml")
+	data := []byte("version: 1\nsources:\n  real: {root: " + realRoot + "}\n  alias: {root: " + aliasRoot + "}\npairs:\n  - id: skills\n    kind: tree\n    claude: {source: real, path: skills}\n    codex: {source: alias, path: skills/codex}\n")
+	writeFile(t, configPath, data)
+
+	if _, err := Load(configPath, configDir); err == nil || !strings.Contains(err.Error(), "overlap") {
+		t.Fatalf("Load(symlink aliases) error = %v, want overlap", err)
+	}
+}
+
 func writeFile(t testing.TB, path string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, data, 0o600); err != nil {

@@ -125,33 +125,71 @@ func Load(file, cwd string) (*Document, error) {
 }
 
 func validateResolvedEndpoints(doc *Document) error {
+	rootIdentities := make(map[string]rootIdentity, len(doc.Roots))
+	for name, root := range doc.Roots {
+		identity := rootIdentity{path: root}
+		confined, err := os.OpenRoot(root)
+		if err == nil {
+			identity.info, err = confined.Stat(".")
+			closeErr := confined.Close()
+			if err != nil || closeErr != nil {
+				identity.info = nil
+			}
+		}
+		rootIdentities[name] = identity
+	}
 	for _, pair := range doc.Config.Pairs {
-		claude := resolvedEndpoint(doc, pair.Claude)
-		codex := resolvedEndpoint(doc, pair.Codex)
-		if claude == codex {
+		claude := resolvedEndpoint(rootIdentities, pair.Claude)
+		codex := resolvedEndpoint(rootIdentities, pair.Codex)
+		if endpointsEqual(rootIdentities, pair.Claude, pair.Codex) {
 			return fmt.Errorf("pair %q endpoints resolve to the same path %s", pair.ID, claude)
 		}
-		if pair.Kind == "tree" && pathsOverlap(claude, codex) {
+		if pair.Kind == "tree" && endpointsOverlap(rootIdentities, pair.Claude, pair.Codex) {
 			return fmt.Errorf("pair %q tree endpoints overlap: %s and %s", pair.ID, claude, codex)
 		}
 	}
 	for _, server := range doc.Config.MCPServers {
-		claude := resolvedEndpoint(doc, server.Claude.Config)
-		codex := resolvedEndpoint(doc, server.Codex.Config)
-		if claude == codex && server.Claude.Server == server.Codex.Server {
+		if endpointsEqual(rootIdentities, server.Claude.Config, server.Codex.Config) && server.Claude.Server == server.Codex.Server {
 			return fmt.Errorf("MCP check %q peers resolve to the same entry", server.ID)
 		}
 	}
 	for _, activation := range doc.Config.Activations {
-		if resolvedEndpoint(doc, activation.Expected) == resolvedEndpoint(doc, activation.Live) {
+		if endpointsEqual(rootIdentities, activation.Expected, activation.Live) {
 			return fmt.Errorf("activation %q endpoints resolve to the same path", activation.ID)
 		}
 	}
 	return nil
 }
 
-func resolvedEndpoint(doc *Document, endpoint Endpoint) string {
-	return filepath.Clean(filepath.Join(doc.Roots[endpoint.Source], filepath.FromSlash(endpoint.Path)))
+type rootIdentity struct {
+	path string
+	info os.FileInfo
+}
+
+func resolvedEndpoint(roots map[string]rootIdentity, endpoint Endpoint) string {
+	return filepath.Clean(filepath.Join(roots[endpoint.Source].path, filepath.FromSlash(endpoint.Path)))
+}
+
+func endpointsEqual(roots map[string]rootIdentity, first, second Endpoint) bool {
+	if rootsShareIdentity(roots[first.Source], roots[second.Source]) {
+		return endpointRelativePath(first) == endpointRelativePath(second)
+	}
+	return resolvedEndpoint(roots, first) == resolvedEndpoint(roots, second)
+}
+
+func endpointsOverlap(roots map[string]rootIdentity, first, second Endpoint) bool {
+	if rootsShareIdentity(roots[first.Source], roots[second.Source]) {
+		return pathsOverlap(endpointRelativePath(first), endpointRelativePath(second))
+	}
+	return pathsOverlap(resolvedEndpoint(roots, first), resolvedEndpoint(roots, second))
+}
+
+func rootsShareIdentity(first, second rootIdentity) bool {
+	return first.info != nil && second.info != nil && os.SameFile(first.info, second.info)
+}
+
+func endpointRelativePath(endpoint Endpoint) string {
+	return filepath.Clean(filepath.FromSlash(endpoint.Path))
 }
 
 func pathsOverlap(first, second string) bool {
