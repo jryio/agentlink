@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jryio/agentlink/internal/adopt"
 	"github.com/jryio/agentlink/internal/config"
 	"github.com/jryio/agentlink/internal/hookinput"
 	"github.com/jryio/agentlink/internal/link"
@@ -332,6 +333,74 @@ func (a *application) runInit(args []string) error {
 	output := printer{writer: a.streams.Out}
 	output.printf("✓ created %s\n✓ created %s\n\nNext: edit the pairs, then run `agentlink check`.\n", escapeTerminal(configPath), escapeTerminal(schemaPath))
 	return output.err
+}
+
+func (a *application) runAdopt(ctx context.Context, args []string) error {
+	flags := newFlagSet("adopt")
+	source := flags.String("from", "", "project-relative file or directory to manage")
+	destination := flags.String("to", "", "destination beneath .agents")
+	apply := flags.Bool("apply", false, "apply the displayed plan")
+	force := flags.Bool("force", false, "replace an existing managed destination (requires --apply)")
+	if err := flags.Parse(args); err != nil {
+		return a.flagError("adopt", err)
+	}
+	if flags.NArg() != 0 {
+		return a.usageError("adopt does not accept positional arguments")
+	}
+	if *source == "" {
+		return a.usageError("adopt requires --from PATH")
+	}
+	plan, err := adopt.NewPlan(a.streams.CWD, *source, *destination)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !a.global.quiet {
+		if a.global.format == "json" {
+			if err := writeJSON(a.streams.Out, struct {
+				adopt.Plan
+				Apply bool `json:"apply"`
+			}{Plan: plan, Apply: *apply}); err != nil {
+				return err
+			}
+		} else {
+			output := printer{writer: a.streams.Out}
+			if plan.Managed {
+				output.printf("✓ %s is already managed at %s\n", escapeTerminal(plan.Source), escapeTerminal(plan.Destination))
+			} else {
+				output.printf("%s → %s\n", escapeTerminal(plan.Source), escapeTerminal(plan.Destination))
+				if plan.Overwrite {
+					output.printf("warning: %s already exists; --force --apply will replace it\n", escapeTerminal(plan.Destination))
+				}
+				if !*apply {
+					output.println("Plan only. Re-run with --apply to adopt this configuration.")
+				}
+			}
+			if output.err != nil {
+				return output.err
+			}
+		}
+	}
+	if !*apply || plan.Managed {
+		return nil
+	}
+	if plan.Overwrite && !*force {
+		return a.usageError(fmt.Sprintf("%s already exists; rerun with --force --apply to replace it", plan.Destination))
+	}
+	if err := adopt.Apply(plan, *force); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !a.global.quiet && a.global.format == "human" {
+		output := printer{writer: a.streams.Out}
+		output.printf("✓ adopted %s\n", escapeTerminal(plan.Source))
+		return output.err
+	}
+	return nil
 }
 
 func (a *application) withEngine(fn func(*config.Document, *link.Engine) error) (err error) {

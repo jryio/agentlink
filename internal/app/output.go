@@ -183,6 +183,7 @@ Usage:
 Commands:
   check       Detect missing or drifting peer artifacts (default; aliases: status, audit)
   sync        Preview or apply an explicit one-way reconciliation
+  adopt       Move project configuration into .agents and link it back
   guard       Block when provided changed paths currently drift
   remind      Emit agent-hook context for provided changed paths
   list        Show resolved sources, pairs, and intentional divergences
@@ -202,6 +203,11 @@ Safe sync:
   agentlink sync --from claude            # preview only
   agentlink sync --from claude --apply    # copy missing/drifting files
   agentlink sync --from claude --prune --apply
+
+Adopt existing configuration:
+  agentlink adopt --from .claude/skills
+  agentlink adopt --from .claude/skills --apply
+  agentlink adopt --from .codex/skills --apply --force
 
 Provider-neutral guard:
   printf '%s\n' CLAUDE.md | agentlink guard

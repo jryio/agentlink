@@ -40,6 +40,28 @@ agentlink check
 Neither tool is canonical. Choose `--from claude` or `--from codex` for each
 sync.
 
+## Adopt an existing project
+
+Move any project-relative agent configuration file or directory into `.agents`
+and replace the original with a relative symlink:
+
+```sh
+agentlink adopt --from .claude/skills           # preview
+agentlink adopt --from .claude/skills --apply   # copy, then link back
+```
+
+The default maps `.<agent>/skills` to `.agents/skills`, matching Cloudx's
+shared-skills layout. Other paths stay agent-specific: for example,
+`.claude/settings.local.json` becomes
+`.agents/claude/settings.local.json`. Use `--to PATH` to choose a different
+destination beneath `.agents`.
+
+If the selected destination already exists, `adopt` prints a warning and
+refuses to replace it until `--force --apply` is supplied. The selected root
+must be a regular file or directory inside the project. Relative links inside a
+copied tree are dereferenced only when they stay inside the project; external
+links and an unmanaged linked root are refused.
+
 ## Configure
 
 ```yaml
@@ -99,6 +121,7 @@ agentlink check           check all configured peers
 agentlink check --pair ID check one peer
 agentlink sync            preview or apply one-way sync
 agentlink guard           reject drifting changed paths
+agentlink adopt            preview moving selected configuration into .agents
 agentlink remind          emit hook context
 agentlink list            show resolved configuration
 agentlink validate        validate YAML

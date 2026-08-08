@@ -71,6 +71,8 @@ func Run(ctx context.Context, args []string, version string, streams Streams) er
 		return app.runCheck(ctx, commandArgs)
 	case "sync":
 		return app.runSync(ctx, commandArgs)
+	case "adopt":
+		return app.runAdopt(ctx, commandArgs)
 	case "guard":
 		return app.runGuard(ctx, commandArgs, false)
 	case "remind":
