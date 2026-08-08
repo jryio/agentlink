@@ -13,14 +13,25 @@ import (
 	"github.com/jryio/agentlink/internal/link"
 )
 
+type reportOutput struct {
+	Clean        bool                    `json:"clean"`
+	FindingCount int                     `json:"finding_count"`
+	Pairs        []link.PairReport       `json:"pairs"`
+	Activations  []link.ActivationReport `json:"activations,omitempty"`
+}
+
+func newReportOutput(report link.Report) reportOutput {
+	return reportOutput{
+		Clean:        report.Clean(),
+		FindingCount: report.FindingCount(),
+		Pairs:        report.Pairs,
+		Activations:  report.Activations,
+	}
+}
+
 func (a *application) printReport(report link.Report) error {
 	if a.global.format == "json" {
-		return writeJSON(a.streams.Out, struct {
-			Clean        bool                    `json:"clean"`
-			FindingCount int                     `json:"finding_count"`
-			Pairs        []link.PairReport       `json:"pairs"`
-			Activations  []link.ActivationReport `json:"activations,omitempty"`
-		}{report.Clean(), report.FindingCount(), report.Pairs, report.Activations})
+		return writeJSON(a.streams.Out, newReportOutput(report))
 	}
 	files := 0
 	skipped := 0
@@ -63,6 +74,14 @@ func (a *application) printReport(report link.Report) error {
 	}
 	output.printf("\n%d drift item(s) across %d check(s)\n", report.FindingCount(), checkCount)
 	return output.err
+}
+
+func (a *application) printSyncResult(plan link.Plan, verification link.Report) error {
+	return writeJSON(a.streams.Out, struct {
+		Plan         link.Plan    `json:"plan"`
+		Applied      bool         `json:"applied"`
+		Verification reportOutput `json:"verification"`
+	}{plan, true, newReportOutput(verification)})
 }
 
 func (a *application) printPlan(plan link.Plan, applying bool) error {

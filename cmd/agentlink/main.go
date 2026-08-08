@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/jryio/agentlink/internal/app"
+	"github.com/jryio/agentlink/internal/buildinfo"
 )
 
 var version = "dev" // set via -ldflags
@@ -33,8 +34,12 @@ func run() error {
 	defer stop()
 
 	streams := app.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}
-	if err := app.Run(ctx, os.Args[1:], version, streams); err != nil && !errors.Is(err, context.Canceled) {
-		return err
+	return commandError(app.Run(ctx, os.Args[1:], buildinfo.Version(version), streams))
+}
+
+func commandError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return &app.ExitError{Code: 1}
 	}
-	return nil
+	return err
 }

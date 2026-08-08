@@ -67,6 +67,31 @@ func TestInitRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestInitRejectsCollidingOutputPathsBeforeWriting(t *testing.T) {
+	t.Parallel()
+
+	for _, force := range []bool{false, true} {
+		name := "without force"
+		if force {
+			name = "with force"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			args := []string{"init"}
+			if force {
+				args = append(args, "--force")
+			}
+			args = append(args, "agentlink.schema.json")
+			_, _, err := runCLIErr(t, dir, nil, args...)
+			assertExitCode(t, err, exitUsage)
+			if _, statErr := os.Stat(filepath.Join(dir, "agentlink.schema.json")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("colliding output exists after rejected init: %v", statErr)
+			}
+		})
+	}
+}
+
 func TestRemindCodexJSON(t *testing.T) {
 	t.Parallel()
 

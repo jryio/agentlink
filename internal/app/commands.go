@@ -73,7 +73,8 @@ func (a *application) runSync(ctx context.Context, args []string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if !a.global.quiet {
+		deferJSONOutput := a.global.format == "json" && *apply && len(plan.Operations) > 0 && len(plan.Unresolved) == 0
+		if !a.global.quiet && !deferJSONOutput {
 			if err := a.printPlan(plan, *apply); err != nil {
 				return err
 			}
@@ -99,13 +100,19 @@ func (a *application) runSync(ctx context.Context, args []string) error {
 			return err
 		}
 		if !a.global.quiet {
-			output := printer{writer: a.streams.Out}
-			output.println()
-			if output.err != nil {
-				return output.err
-			}
-			if err := a.printReport(report); err != nil {
-				return err
+			if a.global.format == "json" {
+				if err := a.printSyncResult(plan, report); err != nil {
+					return err
+				}
+			} else {
+				output := printer{writer: a.streams.Out}
+				output.println()
+				if output.err != nil {
+					return output.err
+				}
+				if err := a.printReport(report); err != nil {
+					return err
+				}
 			}
 		}
 		if !report.Clean() {
@@ -130,7 +137,7 @@ func (a *application) runGuard(ctx context.Context, args []string, reminder bool
 	}
 	changed := flags.Args()
 	if len(changed) == 0 {
-		parsed, err := hookinput.Parse(a.streams.In)
+		parsed, err := hookinput.Parse(ctx, a.streams.In)
 		if err != nil {
 			return fmt.Errorf("read changed paths: %w", err)
 		}
@@ -302,6 +309,9 @@ func (a *application) runInit(args []string) error {
 	}
 	configPath = filepath.Clean(configPath)
 	schemaPath := filepath.Join(filepath.Dir(configPath), "agentlink.schema.json")
+	if configPath == schemaPath {
+		return a.usageError("config path collides with generated schema path")
+	}
 	for _, generatedPath := range []string{configPath, schemaPath} {
 		if err := checkGeneratedWritable(generatedPath, *force); err != nil {
 			return err

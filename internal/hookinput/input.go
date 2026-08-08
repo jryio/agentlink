@@ -3,6 +3,7 @@ package hookinput
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,8 +21,18 @@ var patchPrefixes = [...]string{
 const maxInputSize = 8 << 20
 
 // Parse accepts JSON hook payloads or one-path-per-line input.
-func Parse(reader io.Reader) ([]string, error) {
+func Parse(ctx context.Context, reader io.Reader) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if closer, ok := reader.(io.ReadCloser); ok {
+		stopClose := context.AfterFunc(ctx, func() { _ = closer.Close() })
+		defer stopClose()
+	}
 	data, err := io.ReadAll(io.LimitReader(reader, maxInputSize+1))
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if err != nil {
 		return nil, err
 	}
