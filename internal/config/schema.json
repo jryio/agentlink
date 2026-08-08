@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jryio/agentlink/agentlink.schema.json",
+  "title": "agentlink configuration",
+  "description": "Peer artifact mappings for Claude Code and Codex.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "sources", "pairs"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Configuration format version."
+    },
+    "sources": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z0-9][a-z0-9._-]*$"},
+      "additionalProperties": {"$ref": "#/$defs/source"}
+    },
+    "pairs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/pair"}
+    },
+    "mcp_servers": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/mcpServer"},
+      "description": "Secret-safe Claude/Codex MCP wiring checks."
+    },
+    "activations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/activation"},
+      "description": "Live symlinks that must resolve to durable configured artifacts."
+    },
+    "exceptions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/exception"}
+    },
+    "ignore": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "default": []
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_file_size": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 4194304,
+          "description": "Maximum bytes read from any one artifact; zero uses the safe default."
+        },
+        "max_files": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 25000,
+          "description": "Maximum files inventoried beneath one tree endpoint; zero uses the safe default."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root"],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Filesystem directory. Supports ~ and environment variables."
+        },
+        "relative_to": {
+          "type": "string",
+          "enum": ["config", "cwd"],
+          "default": "config",
+          "description": "Base for a relative root path."
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip pairs using this source while the root is unavailable."
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "path"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\\\]+$",
+          "description": "Slash-separated path confined beneath the source root."
+        }
+      }
+    },
+    "pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "claude", "codex"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "name": {"type": "string"},
+        "kind": {"type": "string", "enum": ["file", "tree", "siblings"]},
+        "claude": {"$ref": "#/$defs/endpoint"},
+        "codex": {"$ref": "#/$defs/endpoint"},
+        "normalizer": {
+          "type": "string",
+          "enum": ["exact", "text", "instructions", "skill", "hook", "presence"],
+          "default": "text"
+        },
+        "sync": {
+          "type": "string",
+          "enum": ["manual", "copy"],
+          "description": "Raw-copy policy. Defaults to copy for exact/text and manual for semantic normalizers."
+        },
+        "ignore": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "default": []
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false,
+          "description": "Treat both endpoints being absent as clean."
+        }
+      }
+    },
+    "mcpPeer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["config", "server"],
+      "properties": {
+        "config": {"$ref": "#/$defs/endpoint"},
+        "server": {"type": "string", "minLength": 1}
+      }
+    },
+    "mcpServer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "claude", "codex"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "name": {"type": "string"},
+        "claude": {"$ref": "#/$defs/mcpPeer"},
+        "codex": {"$ref": "#/$defs/mcpPeer"},
+        "compare_public": {
+          "type": "boolean",
+          "default": true,
+          "description": "Compare command, args, transport, and URL. Secret values are never compared."
+        },
+        "required_env": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}
+        },
+        "optional": {"type": "boolean", "default": false}
+      }
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "expected", "live"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "name": {"type": "string"},
+        "expected": {"$ref": "#/$defs/endpoint"},
+        "live": {"$ref": "#/$defs/endpoint"},
+        "optional": {"type": "boolean", "default": false}
+      }
+    },
+    "exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair", "paths", "reason"],
+      "properties": {
+        "pair": {"type": "string", "minLength": 1},
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why these peer artifacts intentionally diverge."
+        }
+      }
+    }
+  }
+}
