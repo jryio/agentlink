@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,11 @@ func TestConfigValidateFailures(t *testing.T) {
 		{"no pairs", func(c *Config) { c.Pairs = nil }, "define at least one pair"},
 		{"negative file limit", func(c *Config) { c.Limits.MaxFileSize = -1 }, "max_file_size"},
 		{"negative inventory limit", func(c *Config) { c.Limits.MaxFiles = -1 }, "max_files"},
+		{"file limit above ceiling", func(c *Config) { c.Limits.MaxFileSize = hardMaxSize + 1 }, "max_file_size"},
+		{"inventory limit above ceiling", func(c *Config) { c.Limits.MaxFiles = hardMaxFiles + 1 }, "max_files"},
+		{"too many pairs", func(c *Config) { c.Pairs = manyPairs() }, "pairs: must not exceed"},
+		{"too many mcp servers", func(c *Config) { c.MCPServers = manyMCP() }, "mcp_servers: must not exceed"},
+		{"too many activations", func(c *Config) { c.Activations = manyActivations() }, "activations: must not exceed"},
 		{"invalid source name", func(c *Config) { c.Sources["Bad Name"] = Source{Root: "."} }, "name must match"},
 		{"empty source root", func(c *Config) { c.Sources["root"] = Source{} }, "must not be empty"},
 		{"invalid relative base", func(c *Config) { c.Sources["root"] = Source{Root: ".", RelativeTo: "repo"} }, "must be config or cwd"},
@@ -99,6 +105,15 @@ func TestConfigAccessors(t *testing.T) {
 	if got := cfg.MaxFiles(); got != 20 {
 		t.Errorf("custom MaxFiles() = %d, want 20", got)
 	}
+	// Values above the hard ceilings are clamped so a repository-controlled
+	// limit can never remove the application's resource budget (CWE-400).
+	cfg.Limits = Limits{MaxFileSize: hardMaxSize + 1, MaxFiles: hardMaxFiles + 1}
+	if got := cfg.MaxFileSize(); got != hardMaxSize {
+		t.Errorf("ceiling MaxFileSize() = %d, want %d", got, hardMaxSize)
+	}
+	if got := cfg.MaxFiles(); got != hardMaxFiles {
+		t.Errorf("ceiling MaxFiles() = %d, want %d", got, hardMaxFiles)
+	}
 }
 
 func validConfig() Config {
@@ -111,6 +126,48 @@ func validConfig() Config {
 			Codex:  Endpoint{Source: "root", Path: "AGENTS.md"},
 		}},
 	}
+}
+
+func manyPairs() []Pair {
+	pairs := make([]Pair, maxPairs+1)
+	for i := range pairs {
+		pairs[i] = Pair{
+			ID: "p" + strconv.Itoa(i), Kind: "file",
+			Claude: Endpoint{Source: "root", Path: "CLAUDE.md"},
+			Codex:  Endpoint{Source: "root", Path: "AGENTS.md"},
+		}
+	}
+	return pairs
+}
+
+func manyMCP() []MCPServer {
+	servers := make([]MCPServer, maxMCPServers+1)
+	for i := range servers {
+		servers[i] = MCPServer{
+			ID: "s" + strconv.Itoa(i),
+			Claude: MCPPeer{
+				Config: Endpoint{Source: "root", Path: "a.json"},
+				Server: "svc",
+			},
+			Codex: MCPPeer{
+				Config: Endpoint{Source: "root", Path: "b.toml"},
+				Server: "svc",
+			},
+		}
+	}
+	return servers
+}
+
+func manyActivations() []Activation {
+	activations := make([]Activation, maxActivations+1)
+	for i := range activations {
+		activations[i] = Activation{
+			ID:       "a" + strconv.Itoa(i),
+			Expected: Endpoint{Source: "root", Path: "expected"},
+			Live:     Endpoint{Source: "root", Path: "live"},
+		}
+	}
+	return activations
 }
 
 func validMCP(id, env string) MCPServer {

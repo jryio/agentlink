@@ -150,6 +150,11 @@ limits:
 Zero or omission uses the shown default. Configuration files are limited to
 4 MiB. Hook input is limited to 8 MiB.
 
+`max_file_size` is clamped to a hard ceiling of 64 MiB and `max_files` to
+1,000,000; larger values are rejected by `validate` and clamped at runtime so
+repository-controlled configuration cannot remove the process resource budget.
+`pairs`, `mcp_servers`, and `activations` are each capped at 4096 entries.
+
 ## Discovery
 
 Configuration is selected in this order:

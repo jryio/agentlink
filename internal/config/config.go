@@ -19,6 +19,22 @@ const (
 	CurrentVersion  = 1
 	defaultMaxSize  = 4 << 20
 	defaultMaxFiles = 25_000
+
+	// hardMaxSize and hardMaxFiles are ceilings chosen independently of
+	// configuration. A repository-controlled limit must not be able to remove
+	// the application's resource budget (CWE-400). hardMaxSize is sized so the
+	// aggregate in-flight reads across the fixed worker pool stay within a
+	// practical availability budget.
+	hardMaxSize  = 64 << 20
+	hardMaxFiles = 1_000_000
+
+	// Count ceilings for configured checks. The worker pool bounds concurrent
+	// work but not the total task slice or sequential work, so a
+	// repository-controlled config cannot declare an unbounded number of
+	// checks (CWE-400).
+	maxPairs       = 4096
+	maxMCPServers  = 4096
+	maxActivations = 4096
 )
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
@@ -138,18 +154,20 @@ func (c *Config) ArtifactPairIDs() []string {
 	return ids
 }
 
-// MaxFileSize returns the configured file-size limit or its safe default.
+// MaxFileSize returns the configured file-size limit clamped to the hard
+// ceiling, or its safe default.
 func (c *Config) MaxFileSize() int64 {
 	if c.Limits.MaxFileSize > 0 {
-		return c.Limits.MaxFileSize
+		return min(c.Limits.MaxFileSize, hardMaxSize)
 	}
 	return defaultMaxSize
 }
 
-// MaxFiles returns the per-tree inventory limit or its safe default.
+// MaxFiles returns the per-tree inventory limit clamped to the hard ceiling,
+// or its safe default.
 func (c *Config) MaxFiles() int {
 	if c.Limits.MaxFiles > 0 {
-		return c.Limits.MaxFiles
+		return min(c.Limits.MaxFiles, hardMaxFiles)
 	}
 	return defaultMaxFiles
 }
@@ -166,11 +184,26 @@ func (c *Config) Validate() error {
 	if len(c.Pairs) == 0 {
 		errs = append(errs, errors.New("pairs: define at least one pair"))
 	}
+	if len(c.Pairs) > maxPairs {
+		errs = append(errs, fmt.Errorf("pairs: must not exceed %d", maxPairs))
+	}
+	if len(c.MCPServers) > maxMCPServers {
+		errs = append(errs, fmt.Errorf("mcp_servers: must not exceed %d", maxMCPServers))
+	}
+	if len(c.Activations) > maxActivations {
+		errs = append(errs, fmt.Errorf("activations: must not exceed %d", maxActivations))
+	}
 	if c.Limits.MaxFileSize < 0 {
 		errs = append(errs, errors.New("limits.max_file_size: must not be negative"))
 	}
+	if c.Limits.MaxFileSize > hardMaxSize {
+		errs = append(errs, fmt.Errorf("limits.max_file_size: must not exceed %d", hardMaxSize))
+	}
 	if c.Limits.MaxFiles < 0 {
 		errs = append(errs, errors.New("limits.max_files: must not be negative"))
+	}
+	if c.Limits.MaxFiles > hardMaxFiles {
+		errs = append(errs, fmt.Errorf("limits.max_files: must not exceed %d", hardMaxFiles))
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(c.Sources)) {
