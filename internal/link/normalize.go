@@ -4,24 +4,22 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/jryio/agentlink/internal/agent"
+	"github.com/jryio/agentlink/internal/format"
 )
 
-var headingPattern = regexp.MustCompile(`(?im)^# .*?(Claude(?: Code)?|Codex).*?$`)
-
-var ignoredSkillFrontmatter = map[string]struct{}{
-	"allowed-tools":     {},
-	"argument-hint":     {},
-	"argument-metadata": {},
-	"model":             {},
-	"tools":             {},
-	"user-invocable":    {},
+// Params carries the two peer agent specs a normalization runs between. Self
+// is the side being normalized; Other participates in pairwise rules (the
+// skill frontmatter intersection).
+type Params struct {
+	Self  agent.Spec
+	Other agent.Spec
 }
 
-func normalize(name string, data []byte) ([]byte, error) {
+func normalize(name string, data []byte, p Params) ([]byte, error) {
 	if name == "" {
 		name = "text"
 	}
@@ -34,82 +32,107 @@ func normalize(name string, data []byte) ([]byte, error) {
 	case "exact":
 		return bytes.Clone(data), nil
 	case "text":
-		return normalizeText(data), nil
+		return format.NormalizeText(data), nil
 	case "instructions":
-		text := string(normalizeText(data))
-		text = strings.ReplaceAll(text, "Claude Code and Codex", "Claude/Codex")
-		text = strings.ReplaceAll(text, "Claude and Codex", "Claude/Codex")
-		text = strings.ReplaceAll(text, "Claude Code", "Claude")
-		text = headingPattern.ReplaceAllString(text, "# Agent instructions")
+		text := string(format.NormalizeText(data))
+		// Both peers' display names converge on the canonical "Agent" token,
+		// in headings and prose, longest names first — so identical prose
+		// mentioning either tool normalizes identically on both sides.
+		names := displayNames(p.Self, p.Other)
+		if len(names) > 0 {
+			quoted := make([]string, 0, len(names))
+			for _, display := range names {
+				quoted = append(quoted, regexp.QuoteMeta(display))
+			}
+			heading := regexp.MustCompile(`(?im)^# .*?(` + strings.Join(quoted, "|") + `).*?$`)
+			text = heading.ReplaceAllString(text, "# Agent instructions")
+			pairs := make([]string, 0, 2*len(names))
+			for _, display := range names {
+				pairs = append(pairs, display, "Agent")
+			}
+			text = strings.NewReplacer(pairs...).Replace(text)
+		}
 		return []byte(text), nil
 	case "skill":
-		frontmatter, body, ok := splitFrontmatter(data)
+		frontmatter, body, ok := format.Split(data)
 		if !ok {
-			return normalizeText(data), nil
+			return format.NormalizeText(data), nil
 		}
-		var values map[string]any
-		if err := yaml.Unmarshal(frontmatter, &values); err != nil {
-			return nil, fmt.Errorf("parse skill frontmatter: %w", err)
+		values, err := format.Parse(frontmatter)
+		if err != nil {
+			return nil, err
 		}
-		for key := range values {
-			if _, ignored := ignoredSkillFrontmatter[strings.ToLower(key)]; ignored {
-				delete(values, key)
+		inverse := make(map[string]string, len(p.Self.SkillRenames))
+		for canonical, target := range p.Self.SkillRenames {
+			inverse[strings.ToLower(target)] = canonical
+		}
+		kept := make(map[string]any, len(values))
+		for key, value := range values {
+			lower := strings.ToLower(key)
+			if canonical, ok := inverse[lower]; ok {
+				lower = canonical
 			}
-		}
-		keys := make([]string, 0, len(values))
-		for key := range values {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		var canonical strings.Builder
-		canonical.WriteString("---\n")
-		for _, key := range keys {
-			encoded, err := yaml.Marshal(map[string]any{key: values[key]})
-			if err != nil {
-				return nil, fmt.Errorf("normalize skill frontmatter key %q: %w", key, err)
+			if !portableSkillKey(lower, p) {
+				continue
 			}
-			canonical.Write(encoded)
+			kept[lower] = value
 		}
-		canonical.WriteString("---\n")
-		canonical.Write(body)
-		return normalizeText([]byte(canonical.String())), nil
+		return format.Canonical(kept, body)
 	case "hook":
-		text := string(normalizeText(data))
-		replacer := strings.NewReplacer(
-			"remind-claude", "remind-agent",
-			"remind-codex", "remind-agent",
-			"--agent claude", "--agent agent",
-			"--agent codex", "--agent agent",
-		)
-		return []byte(replacer.Replace(text)), nil
+		return format.CanonicalHookDocument(p.Self, p.Other, data)
 	default:
 		return nil, fmt.Errorf("unknown normalizer %q", name)
 	}
 }
 
-func normalizeText(data []byte) []byte {
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = strings.TrimRight(line, " \t")
+// displayNames returns both specs' display names deduplicated, longest first
+// (so "Claude Code" replaces before "Claude").
+func displayNames(specs ...agent.Spec) []string {
+	seen := make(map[string]bool)
+	var names []string
+	for _, spec := range specs {
+		for _, name := range spec.DisplayNames {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
 	}
-	text = strings.TrimSpace(strings.Join(lines, "\n"))
-	if text == "" {
-		return nil
-	}
-	return []byte(text + "\n")
+	slices.SortStableFunc(names, func(a, b string) int { return len(b) - len(a) })
+	return names
 }
 
-func splitFrontmatter(data []byte) ([]byte, []byte, bool) {
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	if !strings.HasPrefix(text, "---\n") {
-		return nil, nil, false
+// portableSkillKey reports whether a canonical frontmatter key is part of the
+// universal compare set and understood by both peers. SkillKeys hold each
+// agent's on-disk spelling, so membership is tested after mapping both sets
+// to canonical names.
+func portableSkillKey(key string, p Params) bool {
+	if !skillKeyIn(key, agent.U) {
+		return false
 	}
-	end := strings.Index(text[4:], "\n---\n")
-	if end < 0 {
-		return nil, nil, false
+	return skillKeyIn(key, canonicalSkillKeys(p.Self)) && skillKeyIn(key, canonicalSkillKeys(p.Other))
+}
+
+func canonicalSkillKeys(spec agent.Spec) []string {
+	keys := make([]string, 0, len(spec.SkillKeys))
+	for _, key := range spec.SkillKeys {
+		canonical := key
+		for canonicalName, targetName := range spec.SkillRenames {
+			if strings.EqualFold(targetName, key) {
+				canonical = canonicalName
+				break
+			}
+		}
+		keys = append(keys, canonical)
 	}
-	end += 4
-	return []byte(text[4:end]), []byte(text[end+5:]), true
+	return keys
+}
+
+func skillKeyIn(key string, keys []string) bool {
+	for _, candidate := range keys {
+		if candidate == key {
+			return true
+		}
+	}
+	return false
 }

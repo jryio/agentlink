@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/jryio/agentlink/agentlink.schema.json",
   "title": "agentlink configuration",
-  "description": "Peer artifact mappings for Claude Code and Codex.",
+  "description": "Peer artifact mappings for registered coding agents and the canonical .agents hub.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "sources", "pairs"],
@@ -27,7 +27,7 @@
       "type": "array",
       "maxItems": 4096,
       "items": {"$ref": "#/$defs/mcpServer"},
-      "description": "Secret-safe Claude/Codex MCP wiring checks."
+      "description": "Secret-safe MCP wiring parity checks between two agents."
     },
     "activations": {
       "type": "array",
@@ -106,13 +106,19 @@
     "pair": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "claude", "codex"],
+      "required": ["id", "kind", "peers"],
       "properties": {
         "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
         "name": {"type": "string"},
         "kind": {"type": "string", "enum": ["file", "tree", "siblings"]},
-        "claude": {"$ref": "#/$defs/endpoint"},
-        "codex": {"$ref": "#/$defs/endpoint"},
+        "peers": {
+          "type": "object",
+          "minProperties": 2,
+          "maxProperties": 2,
+          "propertyNames": {"enum": ["agents", "amp", "claude", "codex", "copilot", "crush", "cursor", "devin", "droid", "gemini", "goose", "hermes", "kilo", "kimi", "mastracode", "omp", "opencode", "pi", "qodercli"]},
+          "additionalProperties": {"$ref": "#/$defs/endpoint"},
+          "description": "Exactly two agent IDs and their artifact endpoints. The canonical hub store is agents."
+        },
         "normalizer": {
           "type": "string",
           "enum": ["exact", "text", "instructions", "skill", "hook", "presence"],
@@ -120,8 +126,8 @@
         },
         "sync": {
           "type": "string",
-          "enum": ["manual", "copy"],
-          "description": "Raw-copy policy. Defaults to copy for exact/text and manual for semantic normalizers."
+          "enum": ["manual", "copy", "translate"],
+          "description": "Raw-copy or translation policy. Defaults to copy for exact/text and manual for semantic normalizers. translate rewrites the source artifact into the target's native shape."
         },
         "ignore": {
           "type": "array",
@@ -147,12 +153,17 @@
     "mcpServer": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "claude", "codex"],
+      "required": ["id", "peers"],
       "properties": {
         "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
         "name": {"type": "string"},
-        "claude": {"$ref": "#/$defs/mcpPeer"},
-        "codex": {"$ref": "#/$defs/mcpPeer"},
+        "peers": {
+          "type": "object",
+          "minProperties": 2,
+          "maxProperties": 2,
+          "propertyNames": {"enum": ["agents", "amp", "claude", "codex", "copilot", "crush", "cursor", "devin", "droid", "gemini", "goose", "hermes", "kilo", "kimi", "mastracode", "omp", "opencode", "pi", "qodercli"]},
+          "additionalProperties": {"$ref": "#/$defs/mcpPeer"}
+        },
         "compare_public": {
           "type": "boolean",
           "default": true,

@@ -98,7 +98,8 @@ func TestPrintReportEscapesControls(t *testing.T) {
 		Pairs: []link.PairReport{
 			{ID: "tree", Findings: []link.Finding{{
 				Pair: "tree", Relative: string(escapeBody), State: link.StateDifferent,
-				Claude: string(nulBody), Codex: string(oscBody), Detail: string(delBody),
+				Paths:  map[string]string{"claude": string(nulBody), "codex": string(oscBody)},
+				Detail: string(delBody),
 			}}},
 			{ID: "skipped", Skipped: true, Reason: string(escapeBody)},
 		},
@@ -123,7 +124,7 @@ func TestPrintPlanEscapesControls(t *testing.T) {
 
 	app, out, _ := sinkApp()
 	plan := link.Plan{
-		From: link.SideClaude,
+		From: link.Side("claude"),
 		Operations: []link.Operation{
 			{Kind: link.OperationCopy, Pair: "p", Relative: string(escapeBody), Source: string(nulBody), Target: string(oscBody)},
 			{Kind: link.OperationMkdir, Target: string(delBody)},

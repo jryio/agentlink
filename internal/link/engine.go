@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/jryio/agentlink/internal/agent"
 	"github.com/jryio/agentlink/internal/config"
 	"github.com/jryio/agentlink/internal/pattern"
 	"github.com/jryio/agentlink/internal/safefs"
@@ -23,10 +24,8 @@ const maxConcurrentChecks = 8
 type State string
 
 const (
-	// StateMissingClaude means only the Claude peer is absent.
-	StateMissingClaude State = "missing_claude"
-	// StateMissingCodex means only the Codex peer is absent.
-	StateMissingCodex State = "missing_codex"
+	// StateMissing means exactly one peer is absent; Finding.Peer names it.
+	StateMissing State = "missing"
 	// StateMissingBoth means both required peers are absent.
 	StateMissingBoth State = "missing_both"
 	// StateDifferent means normalized peer content differs.
@@ -37,12 +36,12 @@ const (
 
 // Finding is one actionable drift item.
 type Finding struct {
-	Pair     string `json:"pair"`
-	Relative string `json:"relative"`
-	State    State  `json:"state"`
-	Claude   string `json:"claude"`
-	Codex    string `json:"codex"`
-	Detail   string `json:"detail,omitempty"`
+	Pair     string            `json:"pair"`
+	Relative string            `json:"relative"`
+	State    State             `json:"state"`
+	Peer     string            `json:"peer,omitempty"`
+	Paths    map[string]string `json:"paths"`
+	Detail   string            `json:"detail,omitempty"`
 }
 
 // PairReport summarizes one configured pair.
@@ -91,8 +90,12 @@ func (r Report) FindingCount() int {
 }
 
 type pairRuntime struct {
-	pair    config.Pair
-	ignored pattern.Set
+	pair      config.Pair
+	ignored   pattern.Set
+	left      string
+	right     string
+	leftSpec  agent.Spec
+	rightSpec agent.Spec
 }
 
 // Engine holds validated configuration and confined source roots.
@@ -115,7 +118,23 @@ func New(doc *config.Document, roots *safefs.Set) (*Engine, error) {
 		if err != nil {
 			return nil, fmt.Errorf("compile ignore patterns for pair %q: %w", pair.ID, err)
 		}
-		pairs = append(pairs, pairRuntime{pair: pair, ignored: ignored})
+		ids := pair.PeerIDs()
+		leftSpec, ok := agent.Get(ids[0])
+		if !ok {
+			return nil, fmt.Errorf("pair %q: unknown agent %q", pair.ID, ids[0])
+		}
+		rightSpec, ok := agent.Get(ids[1])
+		if !ok {
+			return nil, fmt.Errorf("pair %q: unknown agent %q", pair.ID, ids[1])
+		}
+		pairs = append(pairs, pairRuntime{
+			pair:      pair,
+			ignored:   ignored,
+			left:      ids[0],
+			right:     ids[1],
+			leftSpec:  leftSpec,
+			rightSpec: rightSpec,
+		})
 	}
 	return &Engine{doc: doc, fs: roots, pairs: pairs}, nil
 }
@@ -189,22 +208,24 @@ func (e *Engine) checkPair(ctx context.Context, runtime pairRuntime) PairReport 
 		report.Reason = "pair root is ignored or intentionally excepted"
 		return report
 	}
-	if !e.fs.Available(pair.Claude.Source) || !e.fs.Available(pair.Codex.Source) {
+	left := pair.Peers[runtime.left]
+	right := pair.Peers[runtime.right]
+	if !e.fs.Available(left.Source) || !e.fs.Available(right.Source) {
 		report.Skipped = true
 		report.Reason = "optional source unavailable"
 		return report
 	}
-	claudeRoot, err := e.fs.Root(pair.Claude.Source)
+	leftRoot, err := e.fs.Root(left.Source)
 	if err != nil {
 		return errorReport(pair, err)
 	}
-	codexRoot, err := e.fs.Root(pair.Codex.Source)
+	rightRoot, err := e.fs.Root(right.Source)
 	if err != nil {
 		return errorReport(pair, err)
 	}
 	if pair.Kind == "file" {
 		report.Files = 1
-		finding := e.compareFile(ctx, runtime, claudeRoot, pair.Claude.Path, codexRoot, pair.Codex.Path, ".")
+		finding := e.compareFile(ctx, runtime, leftRoot, left.Path, rightRoot, right.Path, ".")
 		if finding != nil {
 			if finding.State != StateMissingBoth || !pair.Optional {
 				report.Findings = append(report.Findings, *finding)
@@ -213,38 +234,40 @@ func (e *Engine) checkPair(ctx context.Context, runtime pairRuntime) PairReport 
 		return report
 	}
 	if pair.Kind == "siblings" {
-		return e.checkSiblings(ctx, runtime, claudeRoot, codexRoot)
+		return e.checkSiblings(ctx, runtime, leftRoot, rightRoot)
 	}
-	return e.checkTree(ctx, runtime, claudeRoot, codexRoot)
+	return e.checkTree(ctx, runtime, leftRoot, rightRoot)
 }
 
 func (e *Engine) checkSiblings(
 	ctx context.Context,
 	runtime pairRuntime,
-	claudeRoot, codexRoot *safefs.Root,
+	leftRoot, rightRoot *safefs.Root,
 ) PairReport {
 	pair := runtime.pair
+	left := pair.Peers[runtime.left]
+	right := pair.Peers[runtime.right]
 	report := PairReport{ID: pair.ID, Name: pairName(pair)}
-	claudeDirs, err := siblingDirs(claudeRoot, pair.Claude.Path, e.doc.Config.MaxFiles(), runtime.ignored)
+	leftDirs, err := siblingDirs(leftRoot, left.Path, e.doc.Config.MaxFiles(), runtime.ignored)
 	if err != nil {
-		report.Findings = append(report.Findings, e.finding(pair, ".", StateError, claudeRoot, codexRoot, "discover Claude siblings: "+err.Error()))
+		report.Findings = append(report.Findings, e.finding(runtime, ".", StateError, "", leftRoot, rightRoot, "discover "+runtime.left+" siblings: "+err.Error()))
 		return report
 	}
-	codexDirs, err := siblingDirs(codexRoot, pair.Codex.Path, e.doc.Config.MaxFiles(), runtime.ignored)
+	rightDirs, err := siblingDirs(rightRoot, right.Path, e.doc.Config.MaxFiles(), runtime.ignored)
 	if err != nil {
-		report.Findings = append(report.Findings, e.finding(pair, ".", StateError, claudeRoot, codexRoot, "discover Codex siblings: "+err.Error()))
+		report.Findings = append(report.Findings, e.finding(runtime, ".", StateError, "", leftRoot, rightRoot, "discover "+runtime.right+" siblings: "+err.Error()))
 		return report
 	}
-	dirs := make(map[string]struct{}, len(claudeDirs)+len(codexDirs))
-	for dir := range claudeDirs {
+	dirs := make(map[string]struct{}, len(leftDirs)+len(rightDirs))
+	for dir := range leftDirs {
 		dirs[dir] = struct{}{}
 	}
-	for dir := range codexDirs {
+	for dir := range rightDirs {
 		dirs[dir] = struct{}{}
 	}
 	if len(dirs) == 0 {
 		if !pair.Optional {
-			report.Findings = append(report.Findings, e.finding(pair, ".", StateMissingBoth, claudeRoot, codexRoot, "no sibling instruction files found"))
+			report.Findings = append(report.Findings, e.finding(runtime, ".", StateMissingBoth, "", leftRoot, rightRoot, "no sibling instruction files found"))
 		}
 		return report
 	}
@@ -252,16 +275,16 @@ func (e *Engine) checkSiblings(
 	slices.Sort(directories)
 	for _, dir := range directories {
 		if err := ctx.Err(); err != nil {
-			report.Findings = append(report.Findings, e.finding(pair, dir, StateError, claudeRoot, codexRoot, err.Error()))
+			report.Findings = append(report.Findings, e.finding(runtime, dir, StateError, "", leftRoot, rightRoot, err.Error()))
 			break
 		}
 		finding := e.compareFile(
 			ctx,
 			runtime,
-			claudeRoot,
-			peerPath(pair, pair.Claude, dir),
-			codexRoot,
-			peerPath(pair, pair.Codex, dir),
+			leftRoot,
+			peerPath(pair, left, dir),
+			rightRoot,
+			peerPath(pair, right, dir),
 			dir,
 		)
 		if finding != nil {
@@ -275,47 +298,49 @@ func (e *Engine) checkSiblings(
 func (e *Engine) checkTree(
 	ctx context.Context,
 	runtime pairRuntime,
-	claudeRoot, codexRoot *safefs.Root,
+	leftRoot, rightRoot *safefs.Root,
 ) PairReport {
 	pair := runtime.pair
+	left := pair.Peers[runtime.left]
+	right := pair.Peers[runtime.right]
 	report := PairReport{ID: pair.ID, Name: pairName(pair)}
-	claudeFiles, claudeExists, claudeIgnored, claudeErr := treeFiles(claudeRoot, pair.Claude.Path, e.doc.Config.MaxFiles(), runtime.ignored)
-	codexFiles, codexExists, codexIgnored, codexErr := treeFiles(codexRoot, pair.Codex.Path, e.doc.Config.MaxFiles(), runtime.ignored)
-	if claudeErr != nil {
-		report.Findings = append(report.Findings, e.finding(pair, ".", StateError, claudeRoot, codexRoot, claudeErr.Error()))
+	leftFiles, leftExists, leftIgnored, leftErr := treeFiles(leftRoot, left.Path, e.doc.Config.MaxFiles(), runtime.ignored)
+	rightFiles, rightExists, rightIgnored, rightErr := treeFiles(rightRoot, right.Path, e.doc.Config.MaxFiles(), runtime.ignored)
+	if leftErr != nil {
+		report.Findings = append(report.Findings, e.finding(runtime, ".", StateError, "", leftRoot, rightRoot, leftErr.Error()))
 		return report
 	}
-	if codexErr != nil {
-		report.Findings = append(report.Findings, e.finding(pair, ".", StateError, claudeRoot, codexRoot, codexErr.Error()))
+	if rightErr != nil {
+		report.Findings = append(report.Findings, e.finding(runtime, ".", StateError, "", leftRoot, rightRoot, rightErr.Error()))
 		return report
 	}
-	if !claudeExists && !codexExists {
+	if !leftExists && !rightExists {
 		if !pair.Optional {
-			report.Findings = append(report.Findings, e.finding(pair, ".", StateMissingBoth, claudeRoot, codexRoot, "both trees are missing"))
+			report.Findings = append(report.Findings, e.finding(runtime, ".", StateMissingBoth, "", leftRoot, rightRoot, "both trees are missing"))
 		}
 		return report
 	}
-	paths := make(map[string]struct{}, len(claudeFiles)+len(codexFiles))
-	for rel := range claudeFiles {
+	paths := make(map[string]struct{}, len(leftFiles)+len(rightFiles))
+	for rel := range leftFiles {
 		paths[rel] = struct{}{}
 	}
-	for rel := range codexFiles {
+	for rel := range rightFiles {
 		paths[rel] = struct{}{}
 	}
 	relativePaths := mapsKeys(paths)
 	slices.Sort(relativePaths)
 	for _, rel := range relativePaths {
 		if err := ctx.Err(); err != nil {
-			report.Findings = append(report.Findings, e.finding(pair, rel, StateError, claudeRoot, codexRoot, err.Error()))
+			report.Findings = append(report.Findings, e.finding(runtime, rel, StateError, "", leftRoot, rightRoot, err.Error()))
 			break
 		}
 		finding := e.compareFile(
 			ctx,
 			runtime,
-			claudeRoot,
-			path.Join(pair.Claude.Path, rel),
-			codexRoot,
-			path.Join(pair.Codex.Path, rel),
+			leftRoot,
+			path.Join(left.Path, rel),
+			rightRoot,
+			path.Join(right.Path, rel),
 			rel,
 		)
 		if finding != nil {
@@ -323,12 +348,12 @@ func (e *Engine) checkTree(
 		}
 		report.Files++
 	}
-	if len(paths) == 0 && claudeExists != codexExists && !claudeIgnored && !codexIgnored {
-		state := StateMissingCodex
-		if !claudeExists {
-			state = StateMissingClaude
+	if len(paths) == 0 && leftExists != rightExists && !leftIgnored && !rightIgnored {
+		missing := runtime.right
+		if !leftExists {
+			missing = runtime.left
 		}
-		report.Findings = append(report.Findings, e.finding(pair, ".", state, claudeRoot, codexRoot, "empty counterpart tree is missing"))
+		report.Findings = append(report.Findings, e.finding(runtime, ".", StateMissing, missing, leftRoot, rightRoot, "empty counterpart tree is missing"))
 	}
 	return report
 }
@@ -336,48 +361,48 @@ func (e *Engine) checkTree(
 func (e *Engine) compareFile(
 	ctx context.Context,
 	runtime pairRuntime,
-	claudeRoot *safefs.Root,
-	claudePath string,
-	codexRoot *safefs.Root,
-	codexPath, rel string,
+	leftRoot *safefs.Root,
+	leftPath string,
+	rightRoot *safefs.Root,
+	rightPath, rel string,
 ) *Finding {
 	if err := ctx.Err(); err != nil {
-		finding := e.finding(runtime.pair, rel, StateError, claudeRoot, codexRoot, err.Error())
+		finding := e.finding(runtime, rel, StateError, "", leftRoot, rightRoot, err.Error())
 		return &finding
 	}
-	claudeData, _, claudeErr := claudeRoot.ReadFile(claudePath, e.doc.Config.MaxFileSize())
-	codexData, _, codexErr := codexRoot.ReadFile(codexPath, e.doc.Config.MaxFileSize())
-	claudeMissing := errors.Is(claudeErr, os.ErrNotExist)
-	codexMissing := errors.Is(codexErr, os.ErrNotExist)
+	leftData, _, leftErr := leftRoot.ReadFile(leftPath, e.doc.Config.MaxFileSize())
+	rightData, _, rightErr := rightRoot.ReadFile(rightPath, e.doc.Config.MaxFileSize())
+	leftMissing := errors.Is(leftErr, os.ErrNotExist)
+	rightMissing := errors.Is(rightErr, os.ErrNotExist)
 	switch {
-	case claudeErr != nil && !claudeMissing:
-		finding := e.finding(runtime.pair, rel, StateError, claudeRoot, codexRoot, "read Claude peer: "+claudeErr.Error())
+	case leftErr != nil && !leftMissing:
+		finding := e.finding(runtime, rel, StateError, "", leftRoot, rightRoot, "read "+runtime.left+" peer: "+leftErr.Error())
 		return &finding
-	case codexErr != nil && !codexMissing:
-		finding := e.finding(runtime.pair, rel, StateError, claudeRoot, codexRoot, "read Codex peer: "+codexErr.Error())
+	case rightErr != nil && !rightMissing:
+		finding := e.finding(runtime, rel, StateError, "", leftRoot, rightRoot, "read "+runtime.right+" peer: "+rightErr.Error())
 		return &finding
-	case claudeMissing && codexMissing:
-		finding := e.finding(runtime.pair, rel, StateMissingBoth, claudeRoot, codexRoot, "both files are missing")
+	case leftMissing && rightMissing:
+		finding := e.finding(runtime, rel, StateMissingBoth, "", leftRoot, rightRoot, "both files are missing")
 		return &finding
-	case claudeMissing:
-		finding := e.finding(runtime.pair, rel, StateMissingClaude, claudeRoot, codexRoot, "Claude counterpart is missing")
+	case leftMissing:
+		finding := e.finding(runtime, rel, StateMissing, runtime.left, leftRoot, rightRoot, runtime.left+" counterpart is missing")
 		return &finding
-	case codexMissing:
-		finding := e.finding(runtime.pair, rel, StateMissingCodex, claudeRoot, codexRoot, "Codex counterpart is missing")
+	case rightMissing:
+		finding := e.finding(runtime, rel, StateMissing, runtime.right, leftRoot, rightRoot, runtime.right+" counterpart is missing")
 		return &finding
 	}
-	claudeNormalized, err := normalize(runtime.pair.Normalizer, claudeData)
+	leftNormalized, err := normalize(runtime.pair.Normalizer, leftData, Params{Self: runtime.leftSpec, Other: runtime.rightSpec})
 	if err != nil {
-		finding := e.finding(runtime.pair, rel, StateError, claudeRoot, codexRoot, "normalize Claude peer: "+err.Error())
+		finding := e.finding(runtime, rel, StateError, "", leftRoot, rightRoot, "normalize "+runtime.left+" peer: "+err.Error())
 		return &finding
 	}
-	codexNormalized, err := normalize(runtime.pair.Normalizer, codexData)
+	rightNormalized, err := normalize(runtime.pair.Normalizer, rightData, Params{Self: runtime.rightSpec, Other: runtime.leftSpec})
 	if err != nil {
-		finding := e.finding(runtime.pair, rel, StateError, claudeRoot, codexRoot, "normalize Codex peer: "+err.Error())
+		finding := e.finding(runtime, rel, StateError, "", leftRoot, rightRoot, "normalize "+runtime.right+" peer: "+err.Error())
 		return &finding
 	}
-	if sha256.Sum256(claudeNormalized) != sha256.Sum256(codexNormalized) {
-		finding := e.finding(runtime.pair, rel, StateDifferent, claudeRoot, codexRoot, "normalized content differs")
+	if sha256.Sum256(leftNormalized) != sha256.Sum256(rightNormalized) {
+		finding := e.finding(runtime, rel, StateDifferent, "", leftRoot, rightRoot, "normalized content differs")
 		return &finding
 	}
 	return nil
@@ -409,19 +434,24 @@ func treeFiles(
 }
 
 func (e *Engine) finding(
-	pair config.Pair,
+	runtime pairRuntime,
 	rel string,
 	state State,
-	claudeRoot, codexRoot *safefs.Root,
+	peer string,
+	leftRoot, rightRoot *safefs.Root,
 	detail string,
 ) Finding {
+	pair := runtime.pair
 	return Finding{
 		Pair:     pair.ID,
 		Relative: rel,
 		State:    state,
-		Claude:   claudeRoot.Abs(peerPath(pair, pair.Claude, rel)),
-		Codex:    codexRoot.Abs(peerPath(pair, pair.Codex, rel)),
-		Detail:   detail,
+		Peer:     peer,
+		Paths: map[string]string{
+			runtime.left:  leftRoot.Abs(peerPath(pair, pair.Peers[runtime.left], rel)),
+			runtime.right: rightRoot.Abs(peerPath(pair, pair.Peers[runtime.right], rel)),
+		},
+		Detail: detail,
 	}
 }
 

@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/jryio/agentlink/internal/config"
 )
 
 // Violation explains why a touched peer artifact is unsafe to finalize.
@@ -45,12 +43,16 @@ func (e *Engine) Guard(ctx context.Context, changed []string) ([]Violation, erro
 			if finding.Relative != "." && !relatives[finding.Relative] {
 				continue
 			}
-			counterpart := finding.Claude + " ↔ " + finding.Codex
-			switch finding.State {
-			case StateMissingClaude:
-				counterpart = finding.Claude
-			case StateMissingCodex:
-				counterpart = finding.Codex
+			keys := make([]string, 0, len(finding.Paths))
+			for id := range finding.Paths {
+				keys = append(keys, id)
+			}
+			slices.Sort(keys)
+			counterpart := ""
+			if finding.State == StateMissing && finding.Peer != "" {
+				counterpart = finding.Paths[finding.Peer]
+			} else if len(keys) == 2 {
+				counterpart = finding.Paths[keys[0]] + " ↔ " + finding.Paths[keys[1]]
 			}
 			violations = append(violations, Violation{
 				Pair:        finding.Pair,
@@ -88,7 +90,7 @@ func (e *Engine) touched(changed []string) (map[string]map[string]bool, error) {
 		for _, runtime := range e.pairs {
 			pair := runtime.pair
 			if pair.Kind == "siblings" {
-				for _, endpoint := range []config.Endpoint{pair.Claude, pair.Codex} {
+				for _, endpoint := range pair.Peers {
 					rootPath := e.doc.Roots[endpoint.Source]
 					rel, relErr := filepath.Rel(rootPath, changedPath)
 					if relErr != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -106,15 +108,9 @@ func (e *Engine) touched(changed []string) (map[string]map[string]bool, error) {
 				}
 				continue
 			}
-			for _, endpoint := range []struct {
-				source string
-				base   string
-			}{
-				{pair.Claude.Source, pair.Claude.Path},
-				{pair.Codex.Source, pair.Codex.Path},
-			} {
-				rootPath := e.doc.Roots[endpoint.source]
-				base := filepath.Join(rootPath, filepath.FromSlash(endpoint.base))
+			for _, endpoint := range pair.Peers {
+				rootPath := e.doc.Roots[endpoint.Source]
+				base := filepath.Join(rootPath, filepath.FromSlash(endpoint.Path))
 				relative, match := endpointRelative(changedPath, base, pair.Kind)
 				if !match || runtime.ignored.Match(relative) {
 					continue
@@ -126,15 +122,15 @@ func (e *Engine) touched(changed []string) (map[string]map[string]bool, error) {
 			}
 		}
 		for _, server := range e.doc.Config.MCPServers {
-			for _, endpoint := range []config.Endpoint{server.Claude.Config, server.Codex.Config} {
-				configuredPath := filepath.Join(e.doc.Roots[endpoint.Source], filepath.FromSlash(endpoint.Path))
+			for _, peer := range server.Peers {
+				configuredPath := filepath.Join(e.doc.Roots[peer.Config.Source], filepath.FromSlash(peer.Config.Path))
 				if changedPath != filepath.Clean(configuredPath) {
 					continue
 				}
 				if result[server.ID] == nil {
 					result[server.ID] = make(map[string]bool)
 				}
-				result[server.ID][server.Claude.Server+" ↔ "+server.Codex.Server] = true
+				result[server.ID][mcpRelative(server)] = true
 			}
 		}
 	}

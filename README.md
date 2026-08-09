@@ -1,12 +1,14 @@
 # agentlink
 
-Keep Claude Code and Codex configuration in sync.
+Keep coding-agent configuration in sync across Claude Code, Codex, Cursor,
+Copilot, Gemini, and a growing registry of CLI agents.
 
 `agentlink` compares peer instructions, skills, hooks, MCP wiring, and live
 symlinks. It works with any local directory, including repositories and mounted
 sync services. It does not depend on Git or a storage provider.
 
-Shared files live in `.agents`; each agent directory links to them:
+Shared files live in `.agents`; agents that cannot read `.agents` natively get
+their own directory linked or translated from it:
 
 ```text
 .agents/
@@ -17,9 +19,13 @@ Shared files live in `.agents`; each agent directory links to them:
         └── SKILL.md
 .claude/
 └── skills -> ../.agents/skills
-.codex/
-└── skills -> ../.agents/skills
+.cursor/
+└── skills/          (translated from .agents by `sync: translate`)
 ```
+
+Most agents — Codex, Cursor, Kimi, Copilot, and others — read `.agents/skills`
+natively, so no pair is needed for them. Run `agentlink init` in a project and
+it detects which agents you use and scaffolds only the pairs you need.
 
 ## Install
 
@@ -47,13 +53,16 @@ The schema provides completion and validation in YAML-aware editors.
 When peers drift:
 
 ```sh
-agentlink sync --from claude           # preview
-agentlink sync --from claude --apply   # write
+agentlink sync --from agents           # preview
+agentlink sync --from agents --apply   # write
 agentlink check
 ```
 
-Neither tool is canonical. Choose `--from claude` or `--from codex` for each
-sync.
+No tool is canonical by force. The `.agents` hub is the usual source; choose
+`--from <agent>` (any registered ID) per sync. With `sync: translate` the
+source artifact is rewritten into the target's native shape — frontmatter keys
+are dropped or renamed, hook events are mapped, settings files are merged
+rather than replaced.
 
 ## Adopt an existing project
 
@@ -79,19 +88,21 @@ links and an unmanaged linked root are refused.
 
 ## Normalizers
 
-Claude Code and Codex express the same intent differently: headings name the
-tool, and skill frontmatter carries keys only one tool understands. Compared
-byte for byte, equivalent files look like drift. Normalizers remove these
-surface differences before comparing.
+Each agent expresses the same intent differently: headings name the tool, and
+skill frontmatter carries keys only one tool understands. Compared byte for
+byte, equivalent files look like drift. Normalizers remove these surface
+differences before comparing, using the agent registry (internal/agent) to
+learn each peer's conventions.
 
 `instructions` treats these headings as equal:
 
 ```markdown
 # Claude Code instructions
-# Codex instructions
+# Agent instructions
 ```
 
-`skill` drops tool-only frontmatter keys, so these compare equal:
+`skill` keeps only the frontmatter keys both peers understand, so these
+compare equal:
 
 ```yaml
 ---
@@ -108,6 +119,10 @@ description: Review a pull request
 ---
 ```
 
+`hook` parses each peer's hook document (JSON, TOML, or YAML; bare, wrapped,
+or embedded in a settings file) and canonicalizes event names, timeout units,
+and agent-specific command tokens before comparing.
+
 ## Configure
 
 ```yaml
@@ -122,16 +137,18 @@ sources:
 pairs:
   - id: instructions
     kind: siblings
-    claude: {source: project, path: CLAUDE.md}
-    codex: {source: project, path: AGENTS.md}
+    peers:
+      agents: {source: project, path: AGENTS.md}
+      claude: {source: project, path: CLAUDE.md}
     normalizer: instructions
-    sync: copy
+    sync: translate
     optional: true
 
   - id: skills
     kind: tree
-    claude: {source: project, path: .claude/skills}
-    codex: {source: project, path: .codex/skills}
+    peers:
+      agents: {source: project, path: .agents/skills}
+      claude: {source: project, path: .claude/skills}
     normalizer: skill
     optional: true
 
@@ -140,6 +157,11 @@ ignore:
   - "**/node_modules/**"
   - "**/cache/**"
 ```
+
+Each pair names exactly two peers keyed by registered agent ID; `agents` is
+the built-in canonical hub. Registered agents: amp, claude, codex, copilot,
+crush, cursor, devin, droid, gemini, goose, hermes, kilo, kimi, mastracode,
+omp, opencode, pi, qodercli.
 
 Sources are plain filesystem roots. A root may be:
 
@@ -154,8 +176,10 @@ Pair kinds:
 - `tree`: matching directory trees
 - `siblings`: every matching `CLAUDE.md` and `AGENTS.md` below a root
 
-Semantic pairs default to manual sync. Set `sync: copy` only when the same file
-is valid for both tools.
+Semantic pairs default to manual sync. Set `sync: copy` only when the same
+file is valid for both peers, or `sync: translate` to have the source
+artifact rewritten into the target's native shape (skill frontmatter,
+instruction headings, hook documents).
 
 See [Configuration](docs/configuration.md) for the full schema.
 
@@ -181,8 +205,9 @@ success, `1` for drift, and `2` for invalid usage.
 
 ## Guard changes
 
-`guard` accepts path arguments, newline-delimited paths, or Claude/Codex hook
-JSON.
+`guard` accepts path arguments, newline-delimited paths, or agent hook JSON
+(Claude, Codex, Cursor, Copilot, and friends share the `path`/`file_path`/
+`filePath`/`file` envelope fields it understands).
 
 ```sh
 agentlink guard CLAUDE.md

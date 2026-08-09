@@ -10,8 +10,8 @@ func TestGuardDifferentPeerNamesBothCounterparts(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, "claude", "CLAUDE.md"), "# Instructions\n\nClaude body.\n")
-	writeTestFile(t, filepath.Join(dir, "codex", "AGENTS.md"), "# Instructions\n\nCodex body.\n")
+	writeTestFile(t, filepath.Join(dir, "claude", "CLAUDE.md"), "# Instructions\n\nShared body.\n")
+	writeTestFile(t, filepath.Join(dir, "codex", "AGENTS.md"), "# Instructions\n\nRewritten body.\n")
 	engine, closeEngine := newTestEngine(t, dir)
 	t.Cleanup(closeEngine)
 

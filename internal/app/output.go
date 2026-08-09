@@ -45,7 +45,14 @@ func (a *application) printReport(report link.Report) error {
 		}
 		for _, finding := range pair.Findings {
 			output.printf("× %-20s %-15s %s\n", pair.ID, finding.State, escapeTerminal(displayRelative(finding.Relative)))
-			output.printf("  Claude  %s\n  Codex   %s\n", escapeTerminal(finding.Claude), escapeTerminal(finding.Codex))
+			keys := make([]string, 0, len(finding.Paths))
+			for id := range finding.Paths {
+				keys = append(keys, id)
+			}
+			slices.Sort(keys)
+			for _, id := range keys {
+				output.printf("  %-8s %s\n", id, escapeTerminal(finding.Paths[id]))
+			}
 			if finding.Detail != "" {
 				output.printf("  %s\n", escapeTerminal(finding.Detail))
 			}
@@ -94,6 +101,9 @@ func (a *application) printPlan(plan link.Plan, applying bool) error {
 		switch operation.Kind {
 		case link.OperationCopy:
 			output.printf("COPY    %s:%s\n        %s\n     →  %s\n", operation.Pair, escapeTerminal(displayRelative(operation.Relative)), escapeTerminal(operation.Source), escapeTerminal(operation.Target))
+			if operation.Detail != "" {
+				output.printf("        ! %s\n", escapeTerminal(operation.Detail))
+			}
 		case link.OperationDelete:
 			output.printf("DELETE  %s:%s\n        %s\n", operation.Pair, escapeTerminal(displayRelative(operation.Relative)), escapeTerminal(operation.Target))
 		case link.OperationMkdir:
@@ -143,7 +153,7 @@ func (a *application) printGuard(violations []link.Violation, agent string, remi
 	if contextOutput.err != nil {
 		return contextOutput.err
 	}
-	if agent == "codex" && reminder {
+	if agent != "human" && reminder {
 		return writeJSON(a.streams.Out, map[string]any{
 			"hookSpecificOutput": map[string]string{
 				"hookEventName": "PostToolUse", "additionalContext": strings.TrimSpace(text.String()),
@@ -175,7 +185,7 @@ func (a *application) usageError(message string) error {
 }
 
 func (a *application) printHelp() error {
-	_, err := io.WriteString(a.streams.Out, `agentlink — keep Claude Code and Codex peer artifacts aligned
+	_, err := io.WriteString(a.streams.Out, `agentlink — keep coding-agent peer artifacts aligned
 
 Usage:
   agentlink [global flags] <command> [flags]
@@ -200,8 +210,8 @@ Global flags:
   -q, --quiet          Suppress normal output
 
 Safe sync:
-  agentlink sync --from claude            # preview only
-  agentlink sync --from claude --apply    # copy missing/drifting files
+  agentlink sync --from agents            # preview only
+  agentlink sync --from agents --apply    # copy missing/drifting files
   agentlink sync --from claude --prune --apply
 
 Adopt existing configuration:
@@ -210,8 +220,8 @@ Adopt existing configuration:
   agentlink adopt --from .codex/skills --apply --force
 
 Provider-neutral guard:
-  printf '%s\n' CLAUDE.md | agentlink guard
-  agentlink guard CLAUDE.md .claude/skills/review/SKILL.md
+  printf '%s\n' AGENTS.md | agentlink guard
+  agentlink guard AGENTS.md .claude/skills/review/SKILL.md
 
 Exit codes: 0 clean/success, 1 drift or blocked guard, 2 usage error.
 `)

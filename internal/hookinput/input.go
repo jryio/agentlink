@@ -71,7 +71,7 @@ func visit(value any, paths map[string]struct{}) {
 	case map[string]any:
 		for key, child := range typed {
 			switch key {
-			case "file_path", "filePath", "path":
+			case "file_path", "filePath", "path", "file":
 				if text, ok := child.(string); ok && text != "" {
 					paths[text] = struct{}{}
 				}

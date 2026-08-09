@@ -4,8 +4,8 @@
 
 - path arguments
 - one path per input line
-- Claude/Codex hook JSON containing `path`, `file_path`, `filePath`, or patch
-  input
+- agent hook JSON containing `path`, `file_path`, `filePath`, `file`, or patch
+  input (Claude, Codex, Cursor, Copilot, and similar envelopes)
 
 Relative paths use the current working directory.
 
@@ -16,8 +16,8 @@ your-path-producer | agentlink remind --agent claude
 your-path-producer | agentlink remind --agent codex
 ```
 
-`remind` always succeeds. It emits context only when touched peers drift. Codex
-output uses the `PostToolUse` hook envelope.
+`remind` always succeeds. It emits context only when touched peers drift.
+Agent adapters use the shared `hookSpecificOutput` `PostToolUse` envelope.
 
 ## Block drift
 

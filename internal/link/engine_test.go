@@ -20,7 +20,7 @@ func TestEngineEndToEnd(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "claude", "CLAUDE.md"), "# Claude instructions\n\nKeep peers aligned.\n")
 	writeTestFile(t, filepath.Join(dir, "codex", "AGENTS.md"), "# Codex instructions\n\nKeep peers aligned.\n")
 	writeTestFile(t, filepath.Join(dir, "claude", "skills", "alpha", "SKILL.md"), "---\nname: alpha\ndescription: Test.\nallowed-tools:\n  - Bash\n---\n\n# Alpha\n\nDo it.\n")
-	writeTestFile(t, filepath.Join(dir, "codex", "skills", "alpha", "SKILL.md"), "---\ndescription: Test.\nname: alpha\n---\n\n# Alpha\n\nDo it.\n")
+	writeTestFile(t, filepath.Join(dir, "codex", "skills", "alpha", "SKILL.md"), "---\ndescription: Test.\nname: alpha\nallowed-tools: [Bash]\n---\n\n# Alpha\n\nDo it.\n")
 
 	engine, closeEngine := newTestEngine(t, dir)
 	t.Cleanup(closeEngine)
@@ -44,7 +44,7 @@ func TestEngineEndToEnd(t *testing.T) {
 		t.Fatalf("Guard() = %+v, want skills violation", violations)
 	}
 
-	plan, err := engine.PlanSync(t.Context(), SideClaude, false, nil)
+	plan, err := engine.PlanSync(t.Context(), Side("claude"), false, nil)
 	if err != nil {
 		t.Fatalf("PlanSync(): %v", err)
 	}
@@ -59,14 +59,14 @@ func TestEngineEndToEnd(t *testing.T) {
 	}
 
 	writeTestFile(t, filepath.Join(dir, "codex", "skills", "codex-only", "SKILL.md"), "# Codex only\n")
-	plan, err = engine.PlanSync(t.Context(), SideClaude, false, nil)
+	plan, err = engine.PlanSync(t.Context(), Side("claude"), false, nil)
 	if err != nil {
 		t.Fatalf("PlanSync(no prune): %v", err)
 	}
 	if len(plan.Operations) != 0 || len(plan.Unresolved) != 1 {
 		t.Fatalf("PlanSync(no prune) = %+v, want one unresolved", plan)
 	}
-	plan, err = engine.PlanSync(t.Context(), SideClaude, true, nil)
+	plan, err = engine.PlanSync(t.Context(), Side("claude"), true, nil)
 	if err != nil {
 		t.Fatalf("PlanSync(prune): %v", err)
 	}
@@ -130,13 +130,9 @@ TASKS_TOKEN = "codex-secret"
 	doc := testDocument(dir)
 	doc.Config.MCPServers = []config.MCPServer{{
 		ID: "mcp-tasks",
-		Claude: config.MCPPeer{
-			Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"},
-			Server: "tasks",
-		},
-		Codex: config.MCPPeer{
-			Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"},
-			Server: "tasks",
+		Peers: map[string]config.MCPPeer{
+			"claude": {Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"}, Server: "tasks"},
+			"codex":  {Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"}, Server: "tasks"},
 		},
 		RequiredEnv: []string{"TASKS_TOKEN"},
 	}}
@@ -193,7 +189,7 @@ func TestSyncCreatesEmptyOptionalCounterpartTree(t *testing.T) {
 	engine, closeEngine := newEngine(t, doc)
 	t.Cleanup(closeEngine)
 	selected := map[string]bool{"skills": true}
-	plan, err := engine.PlanSync(t.Context(), SideClaude, false, selected)
+	plan, err := engine.PlanSync(t.Context(), Side("claude"), false, selected)
 	if err != nil {
 		t.Fatalf("PlanSync(): %v", err)
 	}
@@ -219,8 +215,10 @@ func TestCanceledCheckReportsEveryCheck(t *testing.T) {
 	doc := testDocument(dir)
 	doc.Config.MCPServers = []config.MCPServer{{
 		ID: "mcp", Name: "MCP",
-		Claude: config.MCPPeer{Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"}, Server: "tasks"},
-		Codex:  config.MCPPeer{Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"}, Server: "tasks"},
+		Peers: map[string]config.MCPPeer{
+			"claude": {Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"}, Server: "tasks"},
+			"codex":  {Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"}, Server: "tasks"},
+		},
 	}}
 	doc.Config.Activations = []config.Activation{{
 		ID: "live", Name: "Live",
@@ -299,8 +297,10 @@ func TestPairAcrossIndependentSourceRoots(t *testing.T) {
 			},
 			Pairs: []config.Pair{{
 				ID: "cross-root", Kind: "file", Normalizer: "text",
-				Claude: config.Endpoint{Source: "synced-claude", Path: "CLAUDE.md"},
-				Codex:  config.Endpoint{Source: "local-codex", Path: "AGENTS.md"},
+				Peers: map[string]config.Endpoint{
+					"claude": {Source: "synced-claude", Path: "CLAUDE.md"},
+					"codex":  {Source: "local-codex", Path: "AGENTS.md"},
+				},
 			}},
 		},
 	}
@@ -317,7 +317,7 @@ func TestPairAcrossIndependentSourceRoots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
-	plan, err := engine.PlanSync(t.Context(), SideClaude, false, nil)
+	plan, err := engine.PlanSync(t.Context(), Side("claude"), false, nil)
 	if err != nil {
 		t.Fatalf("PlanSync(): %v", err)
 	}
@@ -358,7 +358,7 @@ func TestSemanticSyncIsManualByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
-	plan, err := engine.PlanSync(t.Context(), SideClaude, false, map[string]bool{"skills": true})
+	plan, err := engine.PlanSync(t.Context(), Side("claude"), false, map[string]bool{"skills": true})
 	if err != nil {
 		t.Fatalf("PlanSync(): %v", err)
 	}
@@ -404,13 +404,17 @@ func testDocument(dir string) *config.Document {
 			Pairs: []config.Pair{
 				{
 					ID: "instructions", Kind: "file", Normalizer: "instructions",
-					Claude: config.Endpoint{Source: "workspace", Path: "claude/CLAUDE.md"},
-					Codex:  config.Endpoint{Source: "workspace", Path: "codex/AGENTS.md"},
+					Peers: map[string]config.Endpoint{
+						"claude": {Source: "workspace", Path: "claude/CLAUDE.md"},
+						"codex":  {Source: "workspace", Path: "codex/AGENTS.md"},
+					},
 				},
 				{
 					ID: "skills", Kind: "tree", Normalizer: "skill", Sync: "copy",
-					Claude: config.Endpoint{Source: "workspace", Path: "claude/skills"},
-					Codex:  config.Endpoint{Source: "workspace", Path: "codex/skills"},
+					Peers: map[string]config.Endpoint{
+						"claude": {Source: "workspace", Path: "claude/skills"},
+						"codex":  {Source: "workspace", Path: "codex/skills"},
+					},
 				},
 			},
 		},

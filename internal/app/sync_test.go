@@ -20,12 +20,13 @@ func TestSyncPostCheckExcludesMCPWiring(t *testing.T) {
 	data := append(config.Sample(), []byte(`
 mcp_servers:
   - id: missing-mcp
-    claude:
-      config: {source: project, path: .mcp.json}
-      server: tasks
-    codex:
-      config: {source: project, path: .codex/config.toml}
-      server: tasks
+    peers:
+      claude:
+        config: {source: project, path: .mcp.json}
+        server: tasks
+      codex:
+        config: {source: project, path: .codex/config.toml}
+        server: tasks
 `)...)
 	writeAppFile(t, configPath, string(data))
 	writeAppFile(t, filepath.Join(dir, "CLAUDE.md"), "# Instructions\n\nAligned by sync.\n")

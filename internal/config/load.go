@@ -139,17 +139,21 @@ func validateResolvedEndpoints(doc *Document) error {
 		rootIdentities[name] = identity
 	}
 	for _, pair := range doc.Config.Pairs {
-		claude := resolvedEndpoint(rootIdentities, pair.Claude)
-		codex := resolvedEndpoint(rootIdentities, pair.Codex)
-		if endpointsEqual(rootIdentities, pair.Claude, pair.Codex) {
-			return fmt.Errorf("pair %q endpoints resolve to the same path %s", pair.ID, claude)
+		ids := pair.PeerIDs()
+		left, right := pair.Peers[ids[0]], pair.Peers[ids[1]]
+		leftPath := resolvedEndpoint(rootIdentities, left)
+		rightPath := resolvedEndpoint(rootIdentities, right)
+		if endpointsEqual(rootIdentities, left, right) {
+			return fmt.Errorf("pair %q endpoints resolve to the same path %s", pair.ID, leftPath)
 		}
-		if pair.Kind == "tree" && endpointsOverlap(rootIdentities, pair.Claude, pair.Codex) {
-			return fmt.Errorf("pair %q tree endpoints overlap: %s and %s", pair.ID, claude, codex)
+		if pair.Kind == "tree" && endpointsOverlap(rootIdentities, left, right) {
+			return fmt.Errorf("pair %q tree endpoints overlap: %s and %s", pair.ID, leftPath, rightPath)
 		}
 	}
 	for _, server := range doc.Config.MCPServers {
-		if endpointsEqual(rootIdentities, server.Claude.Config, server.Codex.Config) && server.Claude.Server == server.Codex.Server {
+		ids := server.PeerIDs()
+		left, right := server.Peers[ids[0]], server.Peers[ids[1]]
+		if endpointsEqual(rootIdentities, left.Config, right.Config) && left.Server == right.Server {
 			return fmt.Errorf("MCP check %q peers resolve to the same entry", server.ID)
 		}
 	}

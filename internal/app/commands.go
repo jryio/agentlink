@@ -9,11 +9,22 @@ import (
 	"strings"
 
 	"github.com/jryio/agentlink/internal/adopt"
+	"github.com/jryio/agentlink/internal/agent"
 	"github.com/jryio/agentlink/internal/config"
 	"github.com/jryio/agentlink/internal/hookinput"
 	"github.com/jryio/agentlink/internal/link"
 	"github.com/jryio/agentlink/internal/safefs"
 )
+
+// agentIDs returns every registered agent ID in sorted order.
+func agentIDs() []string {
+	specs := agent.All()
+	ids := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		ids = append(ids, spec.ID)
+	}
+	return ids
+}
 
 func (a *application) runCheck(ctx context.Context, args []string) error {
 	flags := newFlagSet("check")
@@ -48,7 +59,7 @@ func (a *application) runCheck(ctx context.Context, args []string) error {
 
 func (a *application) runSync(ctx context.Context, args []string) error {
 	flags := newFlagSet("sync")
-	from := flags.String("from", "", "peer to copy from: claude or codex")
+	from := flags.String("from", "", "agent to sync from (a registered agent ID, e.g. agents, claude, codex)")
 	apply := flags.Bool("apply", false, "apply the displayed plan")
 	prune := flags.Bool("prune", false, "delete target-only files (requires --apply to mutate)")
 	var pairs stringList
@@ -59,8 +70,8 @@ func (a *application) runSync(ctx context.Context, args []string) error {
 	if flags.NArg() != 0 {
 		return a.usageError("sync does not accept positional arguments")
 	}
-	if *from != string(link.SideClaude) && *from != string(link.SideCodex) {
-		return a.usageError("sync requires --from claude or --from codex")
+	if _, ok := agent.Get(*from); !ok {
+		return a.usageError("sync requires --from <agent> (one of: " + strings.Join(agentIDs(), ", ") + ")")
 	}
 	return a.withEngine(func(doc *config.Document, engine *link.Engine) error {
 		selected, err := selectedPairs(&doc.Config, pairs, false)
@@ -129,12 +140,18 @@ func (a *application) runGuard(ctx context.Context, args []string, reminder bool
 		name = "remind"
 	}
 	flags := newFlagSet(name)
-	agent := flags.String("agent", "human", "output adapter: human, claude, or codex")
+	agentName := flags.String("agent", "human", "output adapter: human or a registered agent ID with declarative hooks")
 	if err := flags.Parse(args); err != nil {
 		return a.flagError(name, err)
 	}
-	if *agent != "human" && *agent != "claude" && *agent != "codex" {
-		return a.usageError("--agent must be human, claude, or codex")
+	if *agentName != "human" {
+		spec, ok := agent.Get(*agentName)
+		if !ok {
+			return a.usageError("--agent must be human or one of: " + strings.Join(agentIDs(), ", "))
+		}
+		if spec.HooksFormat == agent.HookFormatNone || spec.HooksFormat == agent.HookFormatCode {
+			return a.usageError(fmt.Sprintf("agent %q has no declarative hook envelope", *agentName))
+		}
 	}
 	changed := flags.Args()
 	if len(changed) == 0 {
@@ -149,7 +166,7 @@ func (a *application) runGuard(ctx context.Context, args []string, reminder bool
 		if err != nil {
 			return err
 		}
-		if err := a.printGuard(violations, *agent, reminder); err != nil {
+		if err := a.printGuard(violations, *agentName, reminder); err != nil {
 			return err
 		}
 		if !reminder && len(violations) > 0 {
@@ -196,12 +213,16 @@ func (a *application) runList(args []string) error {
 	}
 	output.println("\nPairs")
 	for _, pair := range doc.Config.Pairs {
-		output.printf("  %-18s %-4s %s:%s ↔ %s:%s\n", pair.ID, pair.Kind, escapeTerminal(pair.Claude.Source), escapeTerminal(pair.Claude.Path), escapeTerminal(pair.Codex.Source), escapeTerminal(pair.Codex.Path))
+		ids := pair.PeerIDs()
+		left, right := pair.Peers[ids[0]], pair.Peers[ids[1]]
+		output.printf("  %-18s %-4s %s:%s ↔ %s:%s\n", pair.ID, pair.Kind, escapeTerminal(ids[0]+"/"+left.Source), escapeTerminal(left.Path), escapeTerminal(ids[1]+"/"+right.Source), escapeTerminal(right.Path))
 	}
 	if len(doc.Config.MCPServers) > 0 {
 		output.println("\nMCP wiring")
 		for _, server := range doc.Config.MCPServers {
-			output.printf("  %-18s %s:%s ↔ %s:%s\n", server.ID, escapeTerminal(server.Claude.Config.Path), escapeTerminal(server.Claude.Server), escapeTerminal(server.Codex.Config.Path), escapeTerminal(server.Codex.Server))
+			ids := server.PeerIDs()
+			left, right := server.Peers[ids[0]], server.Peers[ids[1]]
+			output.printf("  %-18s %s:%s ↔ %s:%s\n", server.ID, escapeTerminal(left.Config.Path), escapeTerminal(left.Server), escapeTerminal(right.Config.Path), escapeTerminal(right.Server))
 		}
 	}
 	if len(doc.Config.Activations) > 0 {
@@ -244,6 +265,9 @@ func (a *application) runDoctor(args []string) (err error) {
 	}
 	doc, err := a.loadDocument()
 	if err != nil {
+		if strings.Contains(err.Error(), "unknown agent") {
+			return fmt.Errorf("%w\nregistered agents: %s", err, strings.Join(agentIDs(), ", "))
+		}
 		return err
 	}
 	roots, err := safefs.Open(doc)
@@ -318,7 +342,11 @@ func (a *application) runInit(args []string) error {
 			return err
 		}
 	}
-	if err := writeGenerated(configPath, config.Sample(), *force); err != nil {
+	sample, err := config.SampleFor(filepath.Dir(configPath))
+	if err != nil {
+		return err
+	}
+	if err := writeGenerated(configPath, sample, *force); err != nil {
 		return err
 	}
 	if err := writeGenerated(schemaPath, config.Schema(), *force); err != nil {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jryio/agentlink/internal/agent"
 	"github.com/jryio/agentlink/internal/config"
 	"github.com/jryio/agentlink/internal/safefs"
 )
@@ -35,7 +36,8 @@ func TestReadStructuredFormats(t *testing.T) {
 		t.Fatalf("Root(workspace): %v", err)
 	}
 	for _, extension := range []string{"json", "toml", "yaml"} {
-		values, err := readStructured(root, "config."+extension, 1024)
+		format := map[string]agent.MCPFormat{"json": agent.MCPFormatJSON, "toml": agent.MCPFormatTOML, "yaml": agent.MCPFormatYAML}[extension]
+		values, err := readStructured(root, "config."+extension, 1024, format)
 		if err != nil {
 			t.Errorf("readStructured(%s): %v", extension, err)
 			continue
@@ -44,16 +46,28 @@ func TestReadStructuredFormats(t *testing.T) {
 			t.Errorf("readStructured(%s)[value] = %v", extension, values["value"])
 		}
 	}
-	if _, err := readStructured(root, "config.txt", 1024); err == nil {
-		t.Fatal("readStructured(txt) succeeded, want unsupported extension error")
+	writeTestFile(t, filepath.Join(dir, "config.jsonc"), "// comment\n{\"value\":\"jsonc\",}\n")
+	values, err := readStructured(root, "config.jsonc", 1024, agent.MCPFormatJSONC)
+	if err != nil {
+		t.Fatalf("readStructured(jsonc): %v", err)
+	}
+	if values["value"] != "jsonc" {
+		t.Errorf("readStructured(jsonc)[value] = %v", values["value"])
+	}
+	if _, err := readStructured(root, "config.txt", 1024, agent.MCPFormatNone); err == nil {
+		t.Fatal("readStructured(unsupported format) succeeded, want error")
 	}
 	for _, name := range []string{"multiple.json", "multiple.yaml"} {
-		if _, err := readStructured(root, name, 1024); err == nil {
+		format := agent.MCPFormatJSON
+		if strings.HasSuffix(name, ".yaml") {
+			format = agent.MCPFormatYAML
+		}
+		if _, err := readStructured(root, name, 1024, format); err == nil {
 			t.Errorf("readStructured(%s) succeeded, want multiple-value error", name)
 		}
 	}
 	writeTestFile(t, filepath.Join(dir, "secret.json"), `{"token":"do-not-print"`)
-	if _, err := readStructured(root, "secret.json", 1024); err == nil || strings.Contains(err.Error(), "do-not-print") {
+	if _, err := readStructured(root, "secret.json", 1024, agent.MCPFormatJSON); err == nil || strings.Contains(err.Error(), "do-not-print") {
 		t.Fatalf("readStructured(secret) error = %v, want redacted decode error", err)
 	}
 }
@@ -66,9 +80,11 @@ func TestMCPMissingEntriesAndEnvironment(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, ".codex", "config.toml"), "")
 	doc := testDocument(dir)
 	doc.Config.MCPServers = []config.MCPServer{{
-		ID:          "mcp",
-		Claude:      config.MCPPeer{Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"}, Server: "tasks"},
-		Codex:       config.MCPPeer{Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"}, Server: "tasks"},
+		ID: "mcp",
+		Peers: map[string]config.MCPPeer{
+			"claude": {Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"}, Server: "tasks"},
+			"codex":  {Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"}, Server: "tasks"},
+		},
 		RequiredEnv: []string{"TOKEN"},
 	}}
 	roots, err := safefs.Open(doc)
@@ -91,8 +107,8 @@ func TestMCPMissingEntriesAndEnvironment(t *testing.T) {
 
 	writeTestFile(t, filepath.Join(dir, ".mcp.json"), `{"mcpServers":{"tasks":{"command":"x"}}}`)
 	report = engine.Check(t.Context(), map[string]bool{"mcp": true})
-	if report.FindingCount() != 1 || report.Pairs[0].Findings[0].State != StateMissingCodex {
-		t.Fatalf("Check(one entry) = %+v, want missing Codex", report)
+	if report.FindingCount() != 1 || report.Pairs[0].Findings[0].State != StateMissing || report.Pairs[0].Findings[0].Peer != "codex" {
+		t.Fatalf("Check(one entry) = %+v, want missing codex", report)
 	}
 
 	writeTestFile(t, filepath.Join(dir, ".codex", "config.toml"), "[mcp_servers.tasks]\ncommand = \"x\"\n")
@@ -105,8 +121,85 @@ func TestMCPMissingEntriesAndEnvironment(t *testing.T) {
 		t.Fatalf("os.Remove(.mcp.json): %v", err)
 	}
 	report = engine.Check(t.Context(), map[string]bool{"mcp": true})
-	if report.Pairs[0].Findings[0].State != StateMissingClaude {
+	if report.Pairs[0].Findings[0].State != StateMissing || report.Pairs[0].Findings[0].Peer != "claude" {
 		t.Fatalf("Check(missing Claude config) = %+v", report)
+	}
+}
+
+func TestMCPCrossAgentParity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		agentID   string
+		file      string
+		contents  string
+		wantClean bool
+	}{
+		{
+			"kilo jsonc mcp table with environment",
+			"kilo", "kilo.jsonc",
+			"// kilo config\n{\n  \"mcp\": {\n    \"tasks\": {\n      \"type\": \"local\",\n      \"command\": [\"/usr/bin/env\", \"tasks-mcp\"],\n      \"environment\": {\"TASKS_TOKEN\": \"kilo-secret\"},\n    },\n  },\n}\n",
+			true,
+		},
+		{
+			"opencode array command",
+			"opencode", "opencode.json",
+			`{"mcp": {"tasks": {"type": "local", "command": ["/usr/bin/env", "tasks-mcp"], "environment": {"TASKS_TOKEN": "opencode-secret"}}}}` + "\n",
+			true,
+		},
+		{
+			"opencode command drift detected",
+			"opencode", "opencode.json",
+			`{"mcp": {"tasks": {"type": "local", "command": ["/usr/bin/other", "tasks-mcp"]}}}` + "\n",
+			false,
+		},
+		{
+			"goose stdio extension counts as server",
+			"goose", "goose-config.yaml",
+			"extensions:\n  tasks:\n    type: stdio\n    command: /usr/bin/env\n    args: [tasks-mcp]\n    env:\n      TASKS_TOKEN: goose-secret\n",
+			true,
+		},
+		{
+			"goose builtin extension is not a server",
+			"goose", "goose-config.yaml",
+			"extensions:\n  tasks:\n    type: builtin\n    name: developer\n",
+			false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, ".agents", "mcp.json"), `{
+  "mcpServers": {
+    "tasks": {
+      "command": "/usr/bin/env",
+      "args": ["tasks-mcp"],
+      "env": {"TASKS_TOKEN": "canonical-secret"}
+    }
+  }
+}`)
+			writeTestFile(t, filepath.Join(dir, test.file), test.contents)
+			doc := testDocument(dir)
+			doc.Config.MCPServers = []config.MCPServer{{
+				ID: "mcp",
+				Peers: map[string]config.MCPPeer{
+					"agents":     {Config: config.Endpoint{Source: "workspace", Path: ".agents/mcp.json"}, Server: "tasks"},
+					test.agentID: {Config: config.Endpoint{Source: "workspace", Path: test.file}, Server: "tasks"},
+				},
+				RequiredEnv: []string{"TASKS_TOKEN"},
+			}}
+			engine, closeEngine := newEngine(t, doc)
+			t.Cleanup(closeEngine)
+			report := engine.Check(t.Context(), map[string]bool{"mcp": true})
+			if test.wantClean && !report.Clean() {
+				t.Fatalf("Check() = %+v, want clean", report.Pairs[0].Findings)
+			}
+			if !test.wantClean && report.Clean() {
+				t.Fatalf("Check() = clean, want drift")
+			}
+		})
 	}
 }
 
@@ -117,9 +210,11 @@ func TestMCPReadErrorTakesPriorityOverMissingPeer(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, ".mcp.json"), `{"token":"do-not-print"`)
 	doc := testDocument(dir)
 	doc.Config.MCPServers = []config.MCPServer{{
-		ID:     "mcp",
-		Claude: config.MCPPeer{Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"}, Server: "tasks"},
-		Codex:  config.MCPPeer{Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"}, Server: "tasks"},
+		ID: "mcp",
+		Peers: map[string]config.MCPPeer{
+			"claude": {Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"}, Server: "tasks"},
+			"codex":  {Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"}, Server: "tasks"},
+		},
 	}}
 	roots, err := safefs.Open(doc)
 	if err != nil {

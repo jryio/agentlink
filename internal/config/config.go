@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jryio/agentlink/internal/agent"
 	glob "github.com/jryio/agentlink/internal/pattern"
 )
 
@@ -59,17 +60,36 @@ type Source struct {
 	Optional   bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
-// Pair maps Claude and Codex peer artifacts.
+// Pair maps two agents' peer artifacts. Peers is keyed by registered agent ID
+// (see internal/agent); the canonical hub store uses the reserved ID "agents".
 type Pair struct {
-	ID         string   `yaml:"id" json:"id"`
-	Name       string   `yaml:"name,omitempty" json:"name,omitempty"`
-	Kind       string   `yaml:"kind" json:"kind"`
-	Claude     Endpoint `yaml:"claude" json:"claude"`
-	Codex      Endpoint `yaml:"codex" json:"codex"`
-	Normalizer string   `yaml:"normalizer,omitempty" json:"normalizer,omitempty"`
-	Sync       string   `yaml:"sync,omitempty" json:"sync,omitempty"`
-	Ignore     []string `yaml:"ignore,omitempty" json:"ignore,omitempty"`
-	Optional   bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
+	ID         string              `yaml:"id" json:"id"`
+	Name       string              `yaml:"name,omitempty" json:"name,omitempty"`
+	Kind       string              `yaml:"kind" json:"kind"`
+	Peers      map[string]Endpoint `yaml:"peers" json:"peers"`
+	Normalizer string              `yaml:"normalizer,omitempty" json:"normalizer,omitempty"`
+	Sync       string              `yaml:"sync,omitempty" json:"sync,omitempty"`
+	Ignore     []string            `yaml:"ignore,omitempty" json:"ignore,omitempty"`
+	Optional   bool                `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
+// PeerIDs returns the pair's peer keys in sorted order. The first element is
+// the deterministic "left" peer everywhere. It returns zero values when the
+// pair does not name exactly two peers; Validate rejects such pairs.
+func (p Pair) PeerIDs() [2]string {
+	return peerIDs(p.Peers)
+}
+
+func peerIDs[T any](peers map[string]T) [2]string {
+	ids := make([]string, 0, len(peers))
+	for id := range peers {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	if len(ids) != 2 {
+		return [2]string{}
+	}
+	return [2]string{ids[0], ids[1]}
 }
 
 // Endpoint selects a path beneath a named source root.
@@ -92,15 +112,20 @@ type Limits struct {
 	MaxFiles    int   `yaml:"max_files,omitempty" json:"max_files,omitempty"`
 }
 
-// MCPServer verifies secret-safe wiring parity for one MCP service.
+// MCPServer verifies secret-safe wiring parity for one MCP service. Peers is
+// keyed by registered agent ID.
 type MCPServer struct {
-	ID            string   `yaml:"id" json:"id"`
-	Name          string   `yaml:"name,omitempty" json:"name,omitempty"`
-	Claude        MCPPeer  `yaml:"claude" json:"claude"`
-	Codex         MCPPeer  `yaml:"codex" json:"codex"`
-	ComparePublic *bool    `yaml:"compare_public,omitempty" json:"compare_public,omitempty"`
-	RequiredEnv   []string `yaml:"required_env,omitempty" json:"required_env,omitempty"`
-	Optional      bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
+	ID            string             `yaml:"id" json:"id"`
+	Name          string             `yaml:"name,omitempty" json:"name,omitempty"`
+	Peers         map[string]MCPPeer `yaml:"peers" json:"peers"`
+	ComparePublic *bool              `yaml:"compare_public,omitempty" json:"compare_public,omitempty"`
+	RequiredEnv   []string           `yaml:"required_env,omitempty" json:"required_env,omitempty"`
+	Optional      bool               `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
+// PeerIDs returns the server's peer keys in sorted order.
+func (m MCPServer) PeerIDs() [2]string {
+	return peerIDs(m.Peers)
 }
 
 // MCPPeer locates a tool's configuration and its server table name.
@@ -237,24 +262,40 @@ func (c *Config) Validate() error {
 		if !validNormalizer(pair.Normalizer) {
 			errs = append(errs, fmt.Errorf("%s.normalizer: must be exact, text, instructions, skill, hook, or presence", prefix))
 		}
-		if pair.Sync != "" && pair.Sync != "manual" && pair.Sync != "copy" {
-			errs = append(errs, fmt.Errorf("%s.sync: must be manual or copy", prefix))
+		if pair.Sync != "" && pair.Sync != "manual" && pair.Sync != "copy" && pair.Sync != "translate" {
+			errs = append(errs, fmt.Errorf("%s.sync: must be manual, copy, or translate", prefix))
 		}
-		errs = append(errs, validateEndpoint(prefix+".claude", pair.Claude, c.Sources)...)
-		errs = append(errs, validateEndpoint(prefix+".codex", pair.Codex, c.Sources)...)
-		if pair.Claude == pair.Codex {
-			errs = append(errs, fmt.Errorf("%s: Claude and Codex endpoints must be different", prefix))
+		if len(pair.Peers) != 2 {
+			errs = append(errs, fmt.Errorf("%s.peers: must name exactly two agents", prefix))
 		}
-		if pair.Kind == "siblings" {
-			if path.Base(pair.Claude.Path) != pair.Claude.Path || pair.Claude.Path == "." {
-				errs = append(errs, fmt.Errorf("%s.claude.path: siblings path must be a file name", prefix))
+		for _, id := range slices.Sorted(maps.Keys(pair.Peers)) {
+			endpoint := pair.Peers[id]
+			errs = append(errs, validateEndpoint(prefix+".peers."+id, endpoint, c.Sources)...)
+			spec, ok := agent.Get(id)
+			if !ok {
+				errs = append(errs, fmt.Errorf("%s.peers: unknown agent %q", prefix, id))
+				continue
 			}
-			if path.Base(pair.Codex.Path) != pair.Codex.Path || pair.Codex.Path == "." {
-				errs = append(errs, fmt.Errorf("%s.codex.path: siblings path must be a file name", prefix))
+			if pair.Kind == "siblings" && (path.Base(endpoint.Path) != endpoint.Path || endpoint.Path == ".") {
+				errs = append(errs, fmt.Errorf("%s.peers.%s.path: siblings path must be a file name", prefix, id))
+			}
+			if pair.Kind == "file" && endpoint.Path == "." {
+				errs = append(errs, fmt.Errorf("%s: file endpoints must name files, not source roots", prefix))
+			}
+			if pair.Sync == "translate" {
+				switch pair.Normalizer {
+				case "skill", "instructions":
+				case "hook":
+					if spec.HooksFormat == agent.HookFormatNone || spec.HooksFormat == agent.HookFormatCode {
+						errs = append(errs, fmt.Errorf("%s: agent %q has no declarative hook file", prefix, id))
+					}
+				default:
+					errs = append(errs, fmt.Errorf("%s.sync: translate requires normalizer skill, instructions, or hook", prefix))
+				}
 			}
 		}
-		if pair.Kind == "file" && (pair.Claude.Path == "." || pair.Codex.Path == ".") {
-			errs = append(errs, fmt.Errorf("%s: file endpoints must name files, not source roots", prefix))
+		if ids := pair.PeerIDs(); len(pair.Peers) == 2 && pair.Peers[ids[0]] == pair.Peers[ids[1]] {
+			errs = append(errs, fmt.Errorf("%s: peer endpoints must be different", prefix))
 		}
 		for _, pattern := range append(slices.Clone(c.Ignore), pair.Ignore...) {
 			if err := validatePattern(pattern); err != nil {
@@ -271,19 +312,29 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Errorf("%s.id: duplicate %q", prefix, server.ID))
 		}
 		seen[server.ID] = struct{}{}
-		errs = append(errs, validateEndpoint(prefix+".claude.config", server.Claude.Config, c.Sources)...)
-		errs = append(errs, validateEndpoint(prefix+".codex.config", server.Codex.Config, c.Sources)...)
-		if server.Claude == server.Codex {
-			errs = append(errs, fmt.Errorf("%s: Claude and Codex MCP peers must be different", prefix))
+		if len(server.Peers) != 2 {
+			errs = append(errs, fmt.Errorf("%s.peers: must name exactly two agents", prefix))
 		}
-		if strings.TrimSpace(server.Claude.Server) == "" {
-			errs = append(errs, fmt.Errorf("%s.claude.server: must not be empty", prefix))
+		for _, id := range slices.Sorted(maps.Keys(server.Peers)) {
+			peer := server.Peers[id]
+			errs = append(errs, validateEndpoint(prefix+".peers."+id+".config", peer.Config, c.Sources)...)
+			spec, ok := agent.Get(id)
+			if !ok {
+				errs = append(errs, fmt.Errorf("%s.peers: unknown agent %q", prefix, id))
+				continue
+			}
+			if spec.MCPFormat == agent.MCPFormatNone {
+				errs = append(errs, fmt.Errorf("%s: agent %q has no MCP configuration", prefix, id))
+			}
+			if strings.TrimSpace(peer.Server) == "" {
+				errs = append(errs, fmt.Errorf("%s.peers.%s.server: must not be empty", prefix, id))
+			}
+			if peer.Config.Path == "." {
+				errs = append(errs, fmt.Errorf("%s: MCP config endpoints must name files, not source roots", prefix))
+			}
 		}
-		if strings.TrimSpace(server.Codex.Server) == "" {
-			errs = append(errs, fmt.Errorf("%s.codex.server: must not be empty", prefix))
-		}
-		if server.Claude.Config.Path == "." || server.Codex.Config.Path == "." {
-			errs = append(errs, fmt.Errorf("%s: MCP config endpoints must name files, not source roots", prefix))
+		if ids := server.PeerIDs(); len(server.Peers) == 2 && server.Peers[ids[0]] == server.Peers[ids[1]] {
+			errs = append(errs, fmt.Errorf("%s: peer MCP endpoints must be different", prefix))
 		}
 		envSeen := make(map[string]struct{}, len(server.RequiredEnv))
 		for _, name := range server.RequiredEnv {

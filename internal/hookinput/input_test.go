@@ -24,6 +24,49 @@ func TestParseJSONPatch(t *testing.T) {
 	}
 }
 
+func TestParseAgentEnvelopes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			"claude post-tool-use",
+			`{"session_id": "s", "hook_event_name": "PostToolUse", "tool_input": {"file_path": "CLAUDE.md"}}`,
+			[]string{"CLAUDE.md"},
+		},
+		{
+			"cursor after-file-edit",
+			`{"hook_event_name": "afterFileEdit", "file_path": "src/a.go", "edits": [{"old_string": "x"}]}`,
+			[]string{"src/a.go"},
+		},
+		{
+			"cursor attachments nested",
+			`{"hook_event_name": "beforeSubmitPrompt", "attachments": [{"type": "file", "file_path": "docs/b.md"}]}`,
+			[]string{"docs/b.md"},
+		},
+		{
+			"bare file field",
+			`{"file": ".agents/hooks.json"}`,
+			[]string{".agents/hooks.json"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := Parse(t.Context(), strings.NewReader(test.input))
+			if err != nil {
+				t.Fatalf("Parse(): %v", err)
+			}
+			if strings.Join(got, "|") != strings.Join(test.want, "|") {
+				t.Errorf("Parse() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestParseLinesDeduplicates(t *testing.T) {
 	t.Parallel()
 

@@ -32,25 +32,61 @@ func TestConfigValidateFailures(t *testing.T) {
 		{"invalid kind", func(c *Config) { c.Pairs[0].Kind = "directory" }, "must be file, tree, or siblings"},
 		{"invalid normalizer", func(c *Config) { c.Pairs[0].Normalizer = "magic" }, "normalizer"},
 		{"invalid sync policy", func(c *Config) { c.Pairs[0].Sync = "merge" }, "sync"},
-		{"identical endpoints", func(c *Config) { c.Pairs[0].Codex = c.Pairs[0].Claude }, "endpoints must be different"},
-		{"file source root", func(c *Config) { c.Pairs[0].Claude.Path = "." }, "file endpoints must name files"},
-		{"unknown source", func(c *Config) { c.Pairs[0].Claude.Source = "missing" }, "unknown source"},
-		{"escaping endpoint", func(c *Config) { c.Pairs[0].Claude.Path = "../escape" }, "beneath its source"},
-		{"backslash endpoint", func(c *Config) { c.Pairs[0].Claude.Path = `..\escape` }, "slash-separated"},
-		{"nested sibling name", func(c *Config) { c.Pairs[0].Kind = "siblings"; c.Pairs[0].Claude.Path = "docs/CLAUDE.md" }, "siblings path must be a file name"},
+		{"single peer", func(c *Config) {
+			c.Pairs[0].Peers = map[string]Endpoint{"claude": {Source: "root", Path: "CLAUDE.md"}}
+		}, "exactly two agents"},
+		{"unknown peer agent", func(c *Config) {
+			c.Pairs[0].Peers["bogus"] = c.Pairs[0].Peers["codex"]
+			delete(c.Pairs[0].Peers, "codex")
+		}, "unknown agent"},
+		{"identical endpoints", func(c *Config) {
+			c.Pairs[0].Peers["codex"] = c.Pairs[0].Peers["claude"]
+		}, "endpoints must be different"},
+		{"translate with plain text normalizer", func(c *Config) {
+			c.Pairs[0].Normalizer = "text"
+			c.Pairs[0].Sync = "translate"
+		}, "translate requires normalizer"},
+		{"translate hooks for code-only agent", func(c *Config) {
+			c.Pairs[0].Normalizer = "hook"
+			c.Pairs[0].Sync = "translate"
+			c.Pairs[0].Peers["pi"] = c.Pairs[0].Peers["codex"]
+			delete(c.Pairs[0].Peers, "codex")
+		}, "no declarative hook file"},
+		{"file source root", func(c *Config) { withClaudeEndpoint(c, Endpoint{Source: "root", Path: "."}) }, "file endpoints must name files"},
+		{"unknown source", func(c *Config) { withClaudeEndpoint(c, Endpoint{Source: "missing", Path: "CLAUDE.md"}) }, "unknown source"},
+		{"escaping endpoint", func(c *Config) { withClaudeEndpoint(c, Endpoint{Source: "root", Path: "../escape"}) }, "beneath its source"},
+		{"backslash endpoint", func(c *Config) { withClaudeEndpoint(c, Endpoint{Source: "root", Path: `..\escape`}) }, "slash-separated"},
+		{"nested sibling name", func(c *Config) {
+			c.Pairs[0].Kind = "siblings"
+			withClaudeEndpoint(c, Endpoint{Source: "root", Path: "docs/CLAUDE.md"})
+		}, "siblings path must be a file name"},
 		{"invalid double star", func(c *Config) { c.Ignore = []string{"foo**bar"} }, "complete path component"},
 		{"unknown exception pair", func(c *Config) { c.Exceptions = []Exception{{Pair: "missing", Paths: []string{"x"}, Reason: "test"}} }, "unknown pair"},
 		{"empty exception paths", func(c *Config) { c.Exceptions = []Exception{{Pair: "instructions", Reason: "test"}} }, "paths: must not be empty"},
 		{"empty exception reason", func(c *Config) { c.Exceptions = []Exception{{Pair: "instructions", Paths: []string{"x"}}} }, "must document"},
 		{"invalid MCP env", func(c *Config) { c.MCPServers = []MCPServer{validMCP("mcp", "BAD-NAME")} }, "invalid environment name"},
+		{"MCP peer without MCP support", func(c *Config) {
+			server := validMCP("mcp", "TOKEN")
+			server.Peers["pi"] = server.Peers["codex"]
+			delete(server.Peers, "codex")
+			c.MCPServers = []MCPServer{server}
+		}, "has no MCP configuration"},
+		{"unknown MCP peer agent", func(c *Config) {
+			server := validMCP("mcp", "TOKEN")
+			server.Peers["bogus"] = server.Peers["codex"]
+			delete(server.Peers, "codex")
+			c.MCPServers = []MCPServer{server}
+		}, "unknown agent"},
 		{"identical MCP peers", func(c *Config) {
 			server := validMCP("mcp", "TOKEN")
-			server.Codex = server.Claude
+			server.Peers["codex"] = server.Peers["claude"]
 			c.MCPServers = []MCPServer{server}
-		}, "MCP peers must be different"},
+		}, "MCP endpoints must be different"},
 		{"MCP source root", func(c *Config) {
 			server := validMCP("mcp", "TOKEN")
-			server.Claude.Config.Path = "."
+			peer := server.Peers["claude"]
+			peer.Config.Path = "."
+			server.Peers["claude"] = peer
 			c.MCPServers = []MCPServer{server}
 		}, "MCP config endpoints must name files"},
 		{"duplicate MCP env", func(c *Config) {
@@ -60,10 +96,10 @@ func TestConfigValidateFailures(t *testing.T) {
 		}, "duplicate environment name"},
 		{"duplicate MCP id", func(c *Config) { c.MCPServers = []MCPServer{validMCP("instructions", "TOKEN")} }, "duplicate"},
 		{"duplicate activation id", func(c *Config) {
-			c.Activations = []Activation{{ID: "instructions", Expected: c.Pairs[0].Claude, Live: c.Pairs[0].Codex}}
+			c.Activations = []Activation{{ID: "instructions", Expected: c.Pairs[0].Peers["claude"], Live: c.Pairs[0].Peers["codex"]}}
 		}, "duplicate"},
 		{"identical activation endpoints", func(c *Config) {
-			c.Activations = []Activation{{ID: "live", Expected: c.Pairs[0].Claude, Live: c.Pairs[0].Claude}}
+			c.Activations = []Activation{{ID: "live", Expected: c.Pairs[0].Peers["claude"], Live: c.Pairs[0].Peers["claude"]}}
 		}, "expected and live endpoints must be different"},
 	}
 	for _, test := range tests {
@@ -92,6 +128,9 @@ func TestConfigAccessors(t *testing.T) {
 	if _, ok := cfg.PairByID("missing"); ok {
 		t.Fatal("PairByID(missing) was found")
 	}
+	if got := cfg.Pairs[0].PeerIDs(); got != [2]string{"claude", "codex"} {
+		t.Errorf("PeerIDs() = %v, want [claude codex]", got)
+	}
 	if got := cfg.MaxFileSize(); got != defaultMaxSize {
 		t.Errorf("MaxFileSize() = %d, want %d", got, defaultMaxSize)
 	}
@@ -116,14 +155,20 @@ func TestConfigAccessors(t *testing.T) {
 	}
 }
 
+func withClaudeEndpoint(c *Config, endpoint Endpoint) {
+	c.Pairs[0].Peers["claude"] = endpoint
+}
+
 func validConfig() Config {
 	return Config{
 		Version: CurrentVersion,
 		Sources: map[string]Source{"root": {Root: "."}},
 		Pairs: []Pair{{
 			ID: "instructions", Kind: "file", Normalizer: "instructions",
-			Claude: Endpoint{Source: "root", Path: "CLAUDE.md"},
-			Codex:  Endpoint{Source: "root", Path: "AGENTS.md"},
+			Peers: map[string]Endpoint{
+				"claude": {Source: "root", Path: "CLAUDE.md"},
+				"codex":  {Source: "root", Path: "AGENTS.md"},
+			},
 		}},
 	}
 }
@@ -133,8 +178,10 @@ func manyPairs() []Pair {
 	for i := range pairs {
 		pairs[i] = Pair{
 			ID: "p" + strconv.Itoa(i), Kind: "file",
-			Claude: Endpoint{Source: "root", Path: "CLAUDE.md"},
-			Codex:  Endpoint{Source: "root", Path: "AGENTS.md"},
+			Peers: map[string]Endpoint{
+				"claude": {Source: "root", Path: "CLAUDE.md"},
+				"codex":  {Source: "root", Path: "AGENTS.md"},
+			},
 		}
 	}
 	return pairs
@@ -145,13 +192,9 @@ func manyMCP() []MCPServer {
 	for i := range servers {
 		servers[i] = MCPServer{
 			ID: "s" + strconv.Itoa(i),
-			Claude: MCPPeer{
-				Config: Endpoint{Source: "root", Path: "a.json"},
-				Server: "svc",
-			},
-			Codex: MCPPeer{
-				Config: Endpoint{Source: "root", Path: "b.toml"},
-				Server: "svc",
+			Peers: map[string]MCPPeer{
+				"claude": {Config: Endpoint{Source: "root", Path: "a.json"}, Server: "svc"},
+				"codex":  {Config: Endpoint{Source: "root", Path: "b.toml"}, Server: "svc"},
 			},
 		}
 	}
@@ -172,9 +215,11 @@ func manyActivations() []Activation {
 
 func validMCP(id, env string) MCPServer {
 	return MCPServer{
-		ID:          id,
-		Claude:      MCPPeer{Config: Endpoint{Source: "root", Path: ".mcp.json"}, Server: "tasks"},
-		Codex:       MCPPeer{Config: Endpoint{Source: "root", Path: ".codex/config.toml"}, Server: "tasks"},
+		ID: id,
+		Peers: map[string]MCPPeer{
+			"claude": {Config: Endpoint{Source: "root", Path: ".mcp.json"}, Server: "tasks"},
+			"codex":  {Config: Endpoint{Source: "root", Path: ".codex/config.toml"}, Server: "tasks"},
+		},
 		RequiredEnv: []string{env},
 	}
 }

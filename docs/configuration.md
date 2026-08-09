@@ -41,13 +41,21 @@ An unavailable optional source is skipped. Other source errors fail the check.
 pairs:
   - id: global-skills
     kind: tree
-    claude: {source: shared, path: claude/skills}
-    codex: {source: shared, path: codex/skills}
+    peers:
+      agents: {source: shared, path: skills}
+      claude: {source: shared, path: claude/skills}
     normalizer: skill
     sync: manual
     ignore: ["**/generated/**"]
     optional: false
 ```
+
+`peers` names exactly two endpoints keyed by registered agent ID. The
+built-in ID `agents` is the canonical `.agents` hub store. The registered
+agent IDs are: amp, claude, codex, copilot, crush, cursor, devin, droid,
+gemini, goose, hermes, kilo, kimi, mastracode, omp, opencode, pi, qodercli.
+Unknown IDs and agents without the relevant capability (for example a hook
+pair involving pi, whose hooks are TypeScript modules) are validation errors.
 
 `optional` treats two missing peers as clean. One missing peer is still drift.
 
@@ -68,9 +76,9 @@ their source root.
 | --- | --- |
 | `exact` | Compare bytes. |
 | `text` | Normalize line endings, trailing space, and final newline. |
-| `instructions` | Normalize text and Claude/Codex headings. |
-| `skill` | Canonicalize frontmatter and remove tool-only keys. |
-| `hook` | Normalize text and agent-specific reminder commands. |
+| `instructions` | Normalize text and agent-name headings/prose (each registry agent's display names converge on "Agent"). |
+| `skill` | Canonicalize frontmatter and keep only keys both peers understand (renames like cursor's `paths` are inverted first). |
+| `hook` | Parse each peer's hook document and compare canonical form: event names, timeout units, and `--agent`/`remind-` command tokens are normalized; events the other peer cannot express are ignored. |
 | `presence` | Require both files without comparing content. |
 
 Non-`exact` normalizers reject binary files.
@@ -81,6 +89,15 @@ Non-`exact` normalizers reject binary files.
 `sync: manual`.
 
 Use `sync: copy` only when raw content is valid for both peers.
+
+Use `sync: translate` (with `normalizer` `skill`, `instructions`, or `hook`)
+to rewrite the source artifact into the target's native shape on write:
+unsupported frontmatter keys are dropped, canonical keys are renamed (for
+example `globs` becomes `paths` for cursor), hook events are mapped to the
+target's names with unsupported events dropped and reported, and hook
+documents embedded in settings files (claude, gemini, qodercli, crush) are
+merged rather than replacing unrelated settings. Translation never fabricates
+values.
 
 ## Ignore and exceptions
 
@@ -105,17 +122,25 @@ Paths are relative to the pair. `.` covers the whole pair.
 ```yaml
 mcp_servers:
   - id: issues
-    claude:
-      config: {source: project, path: .mcp.json}
-      server: issues
-    codex:
-      config: {source: project, path: .codex/config.toml}
-      server: issues
+    peers:
+      agents:
+        config: {source: project, path: .agents/mcp.json}
+        server: issues
+      codex:
+        config: {source: project, path: .codex/config.toml}
+        server: issues
     compare_public: true
     required_env: [ISSUES_TOKEN]
 ```
 
-Supported formats are JSON, TOML, and YAML.
+Supported formats are JSON, JSONC (comments and trailing commas tolerated),
+TOML, and YAML, chosen from each peer's registry entry. The server table is
+located per agent (`mcpServers`, `mcp_servers`, `mcp`, `amp.mcpServers`, or
+goose's `extensions`, where only `stdio`/`streamable_http` entries count).
+Server fields are normalized before comparison: opencode's single-array
+`command` splits into command and args, `local`/`streamable-*` transport
+aliases converge, and environment key names come from each agent's env field
+(`env`, `environment`, or codex's `env_vars` passthrough).
 
 Checks cover:
 

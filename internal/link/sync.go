@@ -4,22 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
+	"strings"
 
+	"github.com/jryio/agentlink/internal/agent"
 	"github.com/jryio/agentlink/internal/config"
+	"github.com/jryio/agentlink/internal/format"
 	"github.com/jryio/agentlink/internal/safefs"
 )
 
-// Side identifies the peer explicitly chosen as the source of a sync.
+// Side identifies the peer explicitly chosen as the source of a sync. It is a
+// registered agent ID (see internal/agent); the canonical hub is "agents".
 type Side string
-
-const (
-	// SideClaude selects Claude artifacts as the sync source.
-	SideClaude Side = "claude"
-	// SideCodex selects Codex artifacts as the sync source.
-	SideCodex Side = "codex"
-)
 
 // OperationKind is a planned filesystem mutation.
 type OperationKind string
@@ -40,11 +38,19 @@ type Operation struct {
 	Relative string        `json:"relative"`
 	Source   string        `json:"source,omitempty"`
 	Target   string        `json:"target"`
+	// Transform names the formatter kind applied to source bytes before the
+	// write ("skill", "instructions", "hook"); empty means raw copy.
+	Transform string `json:"transform,omitempty"`
+	// Detail carries formatter warnings (dropped events or keys) into the
+	// human-reviewable plan.
+	Detail string `json:"detail,omitempty"`
 
 	sourceRoot string
 	sourcePath string
 	targetRoot string
 	targetPath string
+	data       []byte
+	mode       fs.FileMode
 }
 
 // Plan describes mutations and findings that require manual resolution.
@@ -57,8 +63,8 @@ type Plan struct {
 // PlanSync creates a safe, deterministic reconciliation plan. Deletions only
 // appear when prune is true.
 func (e *Engine) PlanSync(ctx context.Context, from Side, prune bool, selected map[string]bool) (Plan, error) {
-	if from != SideClaude && from != SideCodex {
-		return Plan{}, fmt.Errorf("sync source must be claude or codex")
+	if _, ok := agent.Get(string(from)); !ok {
+		return Plan{}, fmt.Errorf("sync source must be a registered agent, got %q", string(from))
 	}
 	plan := Plan{From: from, Operations: make([]Operation, 0)}
 	artifactSelection := make(map[string]bool, len(e.doc.Config.Pairs))
@@ -79,8 +85,15 @@ func (e *Engine) PlanSync(ctx context.Context, from Side, prune bool, selected m
 		if !ok {
 			return Plan{}, fmt.Errorf("pair %q disappeared from configuration", pairReport.ID)
 		}
+		ids := pair.PeerIDs()
+		fromPeer := string(from) == ids[0] || string(from) == ids[1]
 		for _, finding := range pairReport.Findings {
-			if needsCopy(finding.State, from) && !copyAllowed(pair) {
+			switch {
+			case !fromPeer && finding.State != StateMissingBoth:
+				finding.Detail = fmt.Sprintf("sync source %q is not a peer of this pair", string(from))
+				plan.Unresolved = append(plan.Unresolved, finding)
+				continue
+			case needsCopy(finding, from) && !copyAllowed(pair):
 				finding.Detail = "raw copy disabled for semantic pair; review the adaptation or set sync: copy"
 				plan.Unresolved = append(plan.Unresolved, finding)
 				continue
@@ -129,16 +142,16 @@ func validateOperationTargets(operations []Operation) error {
 
 func copyAllowed(pair config.Pair) bool {
 	if pair.Sync != "" {
-		return pair.Sync == "copy"
+		return pair.Sync == "copy" || pair.Sync == "translate"
 	}
 	return pair.Normalizer == "" || pair.Normalizer == "exact" || pair.Normalizer == "text"
 }
 
-func needsCopy(state State, from Side) bool {
-	if state == StateDifferent {
+func needsCopy(finding Finding, from Side) bool {
+	if finding.State == StateDifferent {
 		return true
 	}
-	return (from == SideClaude && state == StateMissingCodex) || (from == SideCodex && state == StateMissingClaude)
+	return finding.State == StateMissing && finding.Peer != string(from)
 }
 
 // Apply executes a plan through confined roots. Plans are intentionally
@@ -157,6 +170,12 @@ func (e *Engine) Apply(ctx context.Context, plan Plan) error {
 			sourceRoot, err := e.fs.Root(operation.sourceRoot)
 			if err != nil {
 				return fmt.Errorf("copy %s: %w", operation.Source, err)
+			}
+			if operation.Transform != "" {
+				if err := targetRoot.WriteFileAtomic(operation.targetPath, operation.data, operation.mode); err != nil {
+					return fmt.Errorf("translate pair %q path %q: %w", operation.Pair, operation.Relative, err)
+				}
+				continue
 			}
 			if err := safefs.CopyFile(
 				sourceRoot,
@@ -183,14 +202,13 @@ func (e *Engine) Apply(ctx context.Context, plan Plan) error {
 }
 
 func (e *Engine) operationFor(pair config.Pair, finding Finding, from Side, prune bool) (Operation, bool, string) {
-	source := pair.Claude
-	target := pair.Codex
-	copyState := StateMissingCodex
-	deleteState := StateMissingClaude
-	if from == SideCodex {
-		source, target = target, source
-		copyState, deleteState = deleteState, copyState
+	ids := pair.PeerIDs()
+	otherID := ids[0]
+	if otherID == string(from) {
+		otherID = ids[1]
 	}
+	source := pair.Peers[string(from)]
+	target := pair.Peers[otherID]
 	operation := Operation{
 		Pair:       pair.ID,
 		Relative:   finding.Relative,
@@ -209,19 +227,7 @@ func (e *Engine) operationFor(pair config.Pair, finding Finding, from Side, prun
 	}
 	operation.Source = sourceRoot.Abs(operation.sourcePath)
 	operation.Target = targetRoot.Abs(operation.targetPath)
-	switch finding.State {
-	case StateDifferent, copyState:
-		if finding.Relative == "." && pair.Kind == "tree" {
-			operation.Kind = OperationMkdir
-			operation.Source = ""
-			return operation, true, ""
-		}
-		if reason := copySafetyReason(sourceRoot, operation.sourcePath, targetRoot, operation.targetPath); reason != "" {
-			return Operation{}, false, reason
-		}
-		operation.Kind = OperationCopy
-		return operation, true, ""
-	case deleteState:
+	if finding.State == StateMissing && finding.Peer == string(from) {
 		if !prune || finding.Relative == "." {
 			return Operation{}, false, ""
 		}
@@ -235,9 +241,51 @@ func (e *Engine) operationFor(pair config.Pair, finding Finding, from Side, prun
 		operation.Kind = OperationDelete
 		operation.Source = ""
 		return operation, true, ""
-	default:
+	}
+	if finding.State != StateDifferent && (finding.State != StateMissing || finding.Peer != otherID) {
 		return Operation{}, false, ""
 	}
+	if finding.Relative == "." && pair.Kind == "tree" {
+		operation.Kind = OperationMkdir
+		operation.Source = ""
+		return operation, true, ""
+	}
+	if reason := copySafetyReason(sourceRoot, operation.sourcePath, targetRoot, operation.targetPath); reason != "" {
+		return Operation{}, false, reason
+	}
+	operation.Kind = OperationCopy
+	if pair.Sync == "translate" {
+		formatter, ok := format.For(pair.Normalizer)
+		if !ok {
+			return Operation{}, false, "no formatter for kind " + pair.Normalizer
+		}
+		data, mode, err := sourceRoot.ReadFile(operation.sourcePath, e.doc.Config.MaxFileSize())
+		if err != nil {
+			return Operation{}, false, "read translate source: " + err.Error()
+		}
+		var existing []byte
+		targetMode := mode // new files inherit the source mode
+		current, currentMode, readErr := targetRoot.ReadFile(operation.targetPath, e.doc.Config.MaxFileSize())
+		switch {
+		case readErr == nil:
+			existing = current
+			targetMode = currentMode // preserve an existing file's mode
+		case errors.Is(readErr, os.ErrNotExist):
+			// absent target: format into a fresh document
+		default:
+			return Operation{}, false, "read translate target: " + readErr.Error()
+		}
+		targetSpec, _ := agent.Get(otherID)
+		translated, warnings, err := formatter.Format(data, existing, targetSpec)
+		if err != nil {
+			return Operation{}, false, "translate " + pair.Normalizer + ": " + err.Error()
+		}
+		operation.Transform = pair.Normalizer
+		operation.Detail = strings.Join(warnings, "; ")
+		operation.data = translated
+		operation.mode = targetMode
+	}
+	return operation, true, ""
 }
 
 func copySafetyReason(sourceRoot *safefs.Root, sourcePath string, targetRoot *safefs.Root, targetPath string) string {

@@ -25,18 +25,21 @@ pairs:
   - id: project-instructions
     name: Project instructions
     kind: siblings
-    claude: {source: project, path: CLAUDE.md}
-    codex: {source: project, path: AGENTS.md}
+    peers:
+      agents: {source: project, path: AGENTS.md}
+      claude: {source: project, path: CLAUDE.md}
     normalizer: instructions
-    sync: copy
+    sync: translate
     optional: true
 
   - id: project-skills
     name: Project skills
     kind: tree
-    claude: {source: project, path: .claude/skills}
-    codex: {source: project, path: .codex/skills}
+    peers:
+      agents: {source: project, path: .agents/skills}
+      claude: {source: project, path: .claude/skills}
     normalizer: skill
+    sync: translate
     optional: true
 
 ignore:
