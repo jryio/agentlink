@@ -4,7 +4,7 @@
 invalid globs are errors.
 
 ```yaml
-version: 1
+version: 2
 sources: {}
 pairs: []
 mcp_servers: []
@@ -96,8 +96,10 @@ unsupported frontmatter keys are dropped, canonical keys are renamed (for
 example `globs` becomes `paths` for cursor), hook events are mapped to the
 target's names with unsupported events dropped and reported, and hook
 documents embedded in settings files (claude, gemini, qodercli, crush) are
-merged rather than replacing unrelated settings. Translation never fabricates
-values.
+merged rather than replacing unrelated settings. The sync source is always
+canonicalized first, so either peer — not just the `.agents` hub — can be
+`--from`: a claude settings file synced to the hub lands as a bare canonical
+hooks document, not as a settings dump. Translation never fabricates values.
 
 ## Ignore and exceptions
 

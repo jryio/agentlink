@@ -74,8 +74,8 @@ agentlink adopt --from .claude/skills           # preview
 agentlink adopt --from .claude/skills --apply   # copy, then link back
 ```
 
-The default maps `.<agent>/skills` to `.agents/skills`, matching Cloudx's
-shared-skills layout. Other paths stay agent-specific: for example,
+The default maps `.<agent>/skills` to `.agents/skills`, matching the shared
+`.agents/skills` layout. Other paths stay agent-specific: for example,
 `.claude/settings.local.json` becomes
 `.agents/claude/settings.local.json`. Use `--to PATH` to choose a different
 destination beneath `.agents`.
@@ -127,7 +127,7 @@ and agent-specific command tokens before comparing.
 
 ```yaml
 # yaml-language-server: $schema=./agentlink.schema.json
-version: 1
+version: 2
 
 sources:
   project:
