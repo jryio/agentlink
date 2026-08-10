@@ -85,7 +85,11 @@
    "Rules: fold into AGENTS.md (pi concatenates all AGENTS.md/CLAUDE.md from global+ancestors+cwd); never write AGENTS.md and AGENTS.override.md in the same dir.",
    "Commands→prompt templates: strip frontmatter to description/argument-hint (drop allowed-tools/model), convert placeholders to $1/$@/${1:-default}, flatten nested dirs (non-recursive), target .pi/prompts/ or ~/.pi/agent/prompts/ — not .agents/.",
    "Skills: description is required (missing ⇒ silently not loaded, ≤1024 chars); allowed-tools is a space-delimited string, not a YAML array; loose root .md files in .agents/skills/ are ignored — every skill must be a SKILL.md-bearing directory; pi-unique disable-model-invocation has no cross-tool analog (namespace/drop on pi→canonical sync)."
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "code",
+   "mcp_format": ""
+  }
  },
  {
   "agent": "omp",
@@ -171,7 +175,11 @@
    "Skills: description is REQUIRED by the native provider (hard failure, unlike Claude); layout strictly one level skills/<name>/SKILL.md (nested silently undiscovered); drop Claude-only allowed-tools/license; unknown keys preserved as metadata",
    "Hooks untranslatable from declarative configs: no JSON hook config, no stdin envelope, no matchers, no shell commands — must synthesize TS factory modules in .omp/hooks/{pre,post}/ with snake_case events (Claude PreToolUse≈tool_call, PostToolUse≈tool_result; UserPromptSubmit/Notification/Stop have no equivalent)",
    "Subagents must be copied into .omp/agents/*.md (cross-harness .claude/agents explicitly skipped), name+description required; drop omp-only keys (spawns, prewalk, autoloadSkills, read-summarize, thinking-level, blocking, output) when targeting other agents; emit flow-style single-line frontmatter — YAML parse failure falls back to line parsing that mangles block-style arrays/objects"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "code",
+   "mcp_format": "json"
+  }
  },
  {
   "agent": "claude",
@@ -299,7 +307,11 @@
    "Casing mismatch per component: skills use kebab-case (allowed-tools), subagents use camelCase (disallowedTools, permissionMode, maxTurns), hooks/MCP/settings JSON camelCase — canonical format must transcode casing per component type",
    "Hooks: embedded as JSON under 'hooks' in settings.json (not a standalone file, not TOML/YAML); 31 PascalCase events — only ~10 (PreToolUse, PostToolUse, SessionStart, SessionEnd, UserPromptSubmit, Stop, Notification, SubagentStart/Stop, PreCompact) have cross-tool analogs, drop the rest; matchers with chars outside [A-Za-z0-9_ ,|-] silently become unanchored JS regex (anchor with ^...$; MCP matchers need mcp__<server>__.*); only type 'command' handlers are portable; exit 2 blocks but exit 1 does NOT; JSON decisions only on exit 0, nested under hookSpecificOutput with mandatory hookEventName",
    "MCP: emit .mcp.json at project ROOT with top-level mcpServers wrapper (not TOML, not inside .claude/); add \"type\": \"stdio\" for command servers (url-without-type entries are skipped); ${VAR}/${VAR:-default} expansion and ms timeout are Claude-specific; user/local scope lives in path-keyed ~/.claude.json — prefer project .mcp.json for a canonical store"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "json"
+  }
  },
  {
   "agent": "codex",
@@ -387,7 +399,11 @@
     "metadata"
    ]
   },
-  "subagents": "standalone TOML files ~/.codex/agents/*.toml (user) and .codex/agents/*.toml (project); required keys name, description, developer_instructions (no markdown body); optional any config.toml keys (model, model_reasoning_effort, sandbox_mode, [mcp_servers.*], [[skills.config]]); custom name overrides built-ins default/worker/explorer; global [agents] knobs in config.toml; CLI control /agent"
+  "subagents": "standalone TOML files ~/.codex/agents/*.toml (user) and .codex/agents/*.toml (project); required keys name, description, developer_instructions (no markdown body); optional any config.toml keys (model, model_reasoning_effort, sandbox_mode, [mcp_servers.*], [[skills.config]]); custom name overrides built-ins default/worker/explorer; global [agents] knobs in config.toml; CLI control /agent",
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "toml"
+  }
  },
  {
   "agent": "copilot",
@@ -510,7 +526,15 @@
    "Hook event renames vs Claude Code: Stop→agentStop, UserPromptSubmit→userPromptSubmitted, SubagentStop→subagentStop; camelCase vs PascalCase casing selects native vs VS Code/Claude-style payload; Copilot-only events (permissionRequest, postToolUseFailure, userPromptTransformed, errorOccurred, notification) have no canonical equivalent",
    "Stdin envelope is camelCase: sessionId/timestamp (Unix ms number)/cwd/toolName/toolArgs delivered as a JSON-encoded string, toolResult.textResultForLlm; output decision keys differ (permissionDecision+permissionDecisionReason+modifiedArgs, behavior/message/interrupt, decision:block+reason); exit 2 = deny only for preToolUse/permissionRequest; preToolUse command hooks fail-closed on error but fail-open on timeout",
    "MCP reformat: top-level key mcpServers (or bare map in project files), type enum local|stdio|http|sse, preserve tools array filter and headers; all env vars except PATH must be explicit in env (no ambient inheritance); JSON files (.mcp.json/.github/mcp.json/~/.copilot/mcp-config.json), not TOML; project MCP inert until folder trust or GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP=true"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "json",
+   "hook_event_map": {
+    "Stop": "agentStop",
+    "UserPromptSubmit": "userPromptSubmitted"
+   }
+  }
  },
  {
   "agent": "devin",
@@ -597,7 +621,14 @@
     "model"
    ]
   },
-  "subagents": "Supported (custom profiles experimental): project .devin/agents/ or .agents/agents/; global ~/.config/devin/agents/; flat <name>.md or <name>/AGENT.md (precedence AGENT.md > AGENTS.md > agent.md > agents.md); frontmatter keys: name, description, model (default SWE-1.6 via router, not parent's), allowed-tools (lowercase; ask_user_question never grantable), max-nesting (devin-unique); names colliding with subagent_explore/subagent_general skipped; skills reference profiles via agent: key"
+  "subagents": "Supported (custom profiles experimental): project .devin/agents/ or .agents/agents/; global ~/.config/devin/agents/; flat <name>.md or <name>/AGENT.md (precedence AGENT.md > AGENTS.md > agent.md > agents.md); frontmatter keys: name, description, model (default SWE-1.6 via router, not parent's), allowed-tools (lowercase; ask_user_question never grantable), max-nesting (devin-unique); names colliding with subagent_explore/subagent_general skipped; skills reference profiles via agent: key",
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "jsonc",
+   "hook_event_map": {
+    "PostCompact": "PostCompaction"
+   }
+  }
  },
  {
   "agent": "droid",
@@ -704,7 +735,11 @@
    "Hooks: JSON at .factory/hooks.json under top-level \"hooks\" key; only type \"command\" (drop prompt/agent hook types); rewrite $CLAUDE_PROJECT_DIR -> $FACTORY_PROJECT_DIR; remap permission_mode enum (off|spec|auto-low|auto-medium|auto-high vs Claude default|plan|acceptEdits|bypassPermissions); drop droid-only commandRegex when translating away",
    "Subagents: flat .factory/droids/<name>.md, name ^[a-z0-9-_]+$ (lowercase CamelCase); map tool IDs Bash->Execute, Write->Create, MultiEdit->Edit, WebFetch->FetchUrl (case-sensitive); omit tools instead of literal 'all' (rejected); never list TodoWrite/Skill (force-included) or ExitSpecMode/GenerateDroid (validation error); description <=500 chars; model must be inherit/Factory ID/custom:<id> — remap Claude aliases",
    "Rules: no auto-loaded rules surface — merge .agents/rules/** into AGENTS.md or convert to skills, never emit .factory/rules/; commands: rewrite $1/$2 -> $ARGUMENTS and drop all frontmatter except description/argument-hint; MCP: reformat TOML to JSON mcpServers, ${VAR} expands only in env/headers/oauth values; never emit deprecated .droid.yaml or legacy .factory/hooks/hooks.json"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "json"
+  }
  },
  {
   "agent": "kimi",
@@ -803,7 +838,11 @@
     "type"
    ]
   },
-  "subagents": "Supported but NOT folder-discovered (no .kimi/agents/ convention): YAML agent spec files (version: 1; agent map with extend, name, system_prompt_path, system_prompt_args, tools=[Python module:Class paths], exclude_tools, subagents; source-only fields model, when_to_use, allowed_tools) loaded explicitly via --agent-file, or built-ins default/okabe via --agent. Subagents defined inline (subagents: {name: {path, description}}), each a full agent YAML, no nesting; built-in subagent types coder (read/write/shell), explore (no write tools but HAS Shell — not strictly read-only), plan (truly read-only, no Shell). Runtime state under session dir subagents/<agent_id>/."
+  "subagents": "Supported but NOT folder-discovered (no .kimi/agents/ convention): YAML agent spec files (version: 1; agent map with extend, name, system_prompt_path, system_prompt_args, tools=[Python module:Class paths], exclude_tools, subagents; source-only fields model, when_to_use, allowed_tools) loaded explicitly via --agent-file, or built-ins default/okabe via --agent. Subagents defined inline (subagents: {name: {path, description}}), each a full agent YAML, no nesting; built-in subagent types coder (read/write/shell), explore (no write tools but HAS Shell — not strictly read-only), plan (truly read-only, no Shell). Runtime state under session dir subagents/<agent_id>/.",
+  "agentlink": {
+   "hooks_format": "toml",
+   "mcp_format": "json"
+  }
  },
  {
   "agent": "opencode",
@@ -856,7 +895,7 @@
   "rules": "Not a separate concept: rules = AGENTS.md files plus the instructions array (relative paths, globs, remote URLs) in opencode.json; any canonical rules/ dir must be folded into those.",
   "mcp": {
    "file": "mcp key inside opencode.json/opencode.jsonc (project root or ~/.config/opencode/); no separate MCP file",
-   "format": "JSON/JSONC",
+   "format": "JSON/JSONC (opencode.json or opencode.jsonc)",
    "shape": "map of name -> server object; local: {type:\"local\", command:[bin,...args] (single array), cwd, environment (NOT env), enabled, timeout ms}; remote: {type:\"remote\", url, headers, oauth, enabled, timeout}; {env:VAR} and {file:path} substitution anywhere"
   },
   "reads_agents_dir_natively": true,
@@ -867,7 +906,11 @@
    "MCP: JSON only (no TOML); merge command string + args into one command array; rename env -> environment; remote servers need explicit type:\"remote\" + url (no transport field); secrets become literals or {env:VAR} placeholders",
    "Instructions: AGENTS.md has NO include/import syntax (@path is convention only) — flatten @import directives or enumerate extra files/globs/URLs in the instructions array of opencode.json",
    "Subagents: dir is .opencode/agents/ (plural), filename becomes the agent name; convert canonical tools allow-lists to permission maps (allow|ask|deny, glob-capable; tools key deprecated); description frontmatter required; mode is primary|subagent|all"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "code",
+   "mcp_format": "jsonc"
+  }
  },
  {
   "agent": "kilo",
@@ -919,7 +962,11 @@
    "Skills: keep only Agent-Skills-spec frontmatter (name, description, license, compatibility, metadata) — drop tool-specific keys (allowed-tools, model). Set name == directory name (docs contradict themselves; matching is the only safe choice). Validate: name ≤64 chars, [a-z0-9-], no leading/trailing/consecutive hyphens; description ≤1024 chars; compatibility ≤500 chars. Strip !`cmd` shell placeholders from project-deployed skills (never execute outside trusted dirs).",
    "Subagent/MCP renames: agent 'tools' list → 'permission' object of allow|ask|deny, and add mode:'subagent' (default 'all' exposes it as a primary agent). MCP: merge command+args into one 'command' argv array, rename env→environment, add explicit type:'local'|'remote', use 'mcp' key not 'mcpServers', replace alwaysAllow/disabled with enabled + permission rules.",
    "Trust model: {env:VAR} and {file:...} resolve ONLY in trusted config (global ~/.config/kilo, KILO_CONFIG, MDM) — project kilo.jsonc silently ignores {env:} with a warning, so project-scoped translations must inline values or relocate to global; external symlinks for agents/commands/skills need permission.markdown_source allow rules in global config."
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "code",
+   "mcp_format": "jsonc"
+  }
  },
  {
   "agent": "hermes",
@@ -1026,7 +1073,17 @@
    "Skills are global-only (~/.hermes/skills/ or skills.external_dirs — external dirs are mutated in place by Hermes, local wins collisions): drop Claude allowed-tools (no Hermes equivalent); Hermes-only keys (platforms, metadata.hermes.*, required_environment_variables, required_credential_files) dropped for other targets; enforce name regex ^[a-z][a-z0-9_-]*$, description <=60 chars, platforms value macos not darwin; strip ${HERMES_SKILL_DIR}/${HERMES_SESSION_ID} tokens and !`...` inline shell on export.",
    "Hook event renames to snake_case (PreToolUse->pre_tool_call, UserPromptSubmit->pre_llm_call, SessionStart->on_session_start, Stop~=pre_verify NOT equivalent, Notification~=pre_approval_request); flat YAML list per event with matcher = regex on tool NAME only and command shlex.split shell=False (pipes/redirects break — wrap in scripts); stdin envelope lacks transcript_path (event data buried in extra{}); context injection is {context:...} not hookSpecificOutput.additionalContext; first-use consent gate per (event, command) requires allowlist approval or hooks_auto_accept/HERMES_ACCEPT_HOOKS=1.",
    "Slash commands and subagent definitions have no Hermes target: commands/*.md must be converted to SKILL.md skills (Hermes' own importer refuses them); .agents/agents/*.md dropped entirely; SOUL.md/MEMORY.md/USER.md are Hermes-only global files — exclude from canonical sync or map global CLAUDE.md content to memories/MEMORY.md."
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "yaml",
+   "mcp_format": "yaml",
+   "hook_event_map": {
+    "PostToolUse": "post_tool_call",
+    "PreToolUse": "pre_tool_call",
+    "SessionEnd": "on_session_end",
+    "SessionStart": "on_session_start"
+   }
+  }
  },
  {
   "agent": "qodercli",
@@ -1053,7 +1110,7 @@
   "hooks": {
    "supported": true,
    "config_file": "settings.json (top-level \"hooks\" key in ~/.qoder/settings.json, .qoder/settings.json, .qoder/settings.local.json; merged across tiers; plugins use hooks/hooks.json)",
-   "format": "json",
+   "format": "json (// comments allowed)",
    "events": [
     "SessionStart",
     "SessionEnd",
@@ -1130,7 +1187,11 @@
    "Hooks have no standalone file: they are merged JSON under the \"hooks\" key in settings.json (edit without clobbering other keys); 16 Qoder-only events (PostToolUseFailure, PermissionRequest, StopFailure, InstructionsLoaded, ConfigChange, CwdChanged, FileChanged, WorktreeCreate/Remove, Elicitation(Result), TaskCreated/Completed, TeammateIdle, Setup, PostCompact, PermissionDenied) must be dropped when retargeting; rename CLAUDE_PROJECT_DIR -> QODER_PROJECT_DIR; drop hook types prompt/agent and entry fields if/async/once/args/shell when retargeting",
    "Key-name/case flips per surface: subagent frontmatter permissionMode is camelCase (acceptEdits/bypassPermissions/dontAsk) but settings.json uses snake_case; agent-frontmatter mcpServers uses snake_case include_tools/exclude_tools but settings.json MCP uses camelCase includeTools/excludeTools; rules: rename Cursor globs -> glob (or paths), and model_decision without non-empty description or glob-trigger without glob silently disables the rule",
    "Folder Trust (default on) gates ALL project-level config, and new project MCP servers trigger per-server approval prompts — freshly synced .qoder/ and .mcp.json content silently won't load/activate until the workspace is trusted and servers approved; subagent files need matching frontmatter name since filename is ignored"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "jsonc",
+   "mcp_format": "json"
+  }
  },
  {
   "agent": "cursor",
@@ -1224,7 +1285,14 @@
     "user-invocable"
    ]
   },
-  "subagents": "Supported (2.4+). Dirs: `.cursor/agents/` (project), `~/.cursor/agents/` (user); compat `.claude/agents/`, `.codex/agents/` (+ ~ variants). One markdown file per subagent: YAML frontmatter + prompt body. Keys: `name` (optional, defaults from filename; lowercase+hyphens), `description` (optional; drives Task-tool delegation), `model` (optional; `inherit` or `id[param=value]` e.g. claude-opus-5[effort=high,context=300k]), `readonly` (bool, default false), `is_background` (bool, default false). NO `tools` key (Claude tool allowlists undocumented). Cursor-unique: model bracket syntax, readonly, is_background. Precedence: project > user; `.cursor/` beats compat dirs on name conflict. Built-ins: Explore, Bash, Browser."
+  "subagents": "Supported (2.4+). Dirs: `.cursor/agents/` (project), `~/.cursor/agents/` (user); compat `.claude/agents/`, `.codex/agents/` (+ ~ variants). One markdown file per subagent: YAML frontmatter + prompt body. Keys: `name` (optional, defaults from filename; lowercase+hyphens), `description` (optional; drives Task-tool delegation), `model` (optional; `inherit` or `id[param=value]` e.g. claude-opus-5[effort=high,context=300k]), `readonly` (bool, default false), `is_background` (bool, default false). NO `tools` key (Claude tool allowlists undocumented). Cursor-unique: model bracket syntax, readonly, is_background. Precedence: project > user; `.cursor/` beats compat dirs on name conflict. Built-ins: Explore, Bash, Browser.",
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "json",
+   "hook_event_map": {
+    "UserPromptSubmit": "beforeSubmitPrompt"
+   }
+  }
  },
  {
   "agent": "mastracode",
@@ -1319,7 +1387,15 @@
    "Hooks: unmappable events dropped (no PreCompact/Setup/etc.); mastracode-only events AgentStart/AgentEnd/PermissionRequest/PermissionResult/Interrupt have no Claude equivalent",
    "Hooks: stdin envelope is snake_case (session_id/cwd/hook_event_name/run_id/tool_name/tool_input/...), no transcript_path; blocking via exit code 2 + stdout {decision:allow|block,reason,additionalContext}, not Claude's permissionDecision/hookSpecificOutput",
    "Subagents and rules have no file-based target - canonical .agents/agents/* and rules dirs must be folded into instructions/skills or dropped"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "json",
+   "hook_event_map": {
+    "SubagentStop": "SubagentEnd"
+   },
+   "hook_timeout_unit": "ms"
+  }
  },
  {
   "agent": "gemini",
@@ -1399,7 +1475,19 @@
    "Hooks and MCP servers live inside JSON settings.json under `hooks` / `mcpServers` keys — merge into settings JSON preserving siblings; never sync standalone hook files or .mcp.json",
    "Strip skill frontmatter beyond name/description (allowed-tools, license, metadata, compatibility are parsed-then-discarded, inert); sanitize skill names: chars `: \\ / < > * ? \" |` -> `-`; discovery only SKILL.md or */SKILL.md (one level deep)",
    "Instructions: rename canonical file to GEMINI.md (or set context.fileName in settings.json to read AGENTS.md); `@path` lines are live import directives — preserve or inline them, never treat as plain links; subagent `name` must be lowercase [a-z0-9_-] (rename uppercase/dotted canonical names)"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "json",
+   "hook_event_map": {
+    "PostToolUse": "AfterTool",
+    "PreCompact": "PreCompress",
+    "PreToolUse": "BeforeTool",
+    "Stop": "AfterAgent",
+    "UserPromptSubmit": "BeforeAgent"
+   },
+   "hook_timeout_unit": "ms"
+  }
  },
  {
   "agent": "amp",
@@ -1459,7 +1547,11 @@
    "Skill frontmatter: keep only name, description, mcpServers — drop Claude-only keys (allowed-tools, license, metadata). Hard rule: skill directory name must equal frontmatter name; SKILL.md sits directly inside the skill dir.",
    "MCP shape mismatch: use amp.mcpServers inside settings.json (not standalone .mcp.json); skill mcp.json must be a FLAT name->server map with no mcpServers wrapper; drop Claude 'type:stdio' field (transport inferred from command vs url); includeTools is Amp-only.",
    "Amp natively reads .agents/skills/ and .agents/checks/ (1:1 mapping for skills), but .agents/commands/ is dead and checks/*.md are single files with Amp-specific frontmatter (severity-default, tools) — not rules. No rules dir exists; do not emit .amp/rules/; conditional rules need @-mentioned files with Amp-only globs: frontmatter."
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "code",
+   "mcp_format": "jsonc"
+  }
  },
  {
   "agent": "goose",
@@ -1533,7 +1625,11 @@
    "Skill frontmatter: drop Claude-only keys (allowed-tools, license — no tool gating equivalent; closest is per-extension available_tools); nest arbitrary metadata under `metadata:` per agentskills.io rather than flattening; enforce name validation (lowercase ASCII letters/digits/hyphens, ≤64 chars, no leading/trailing hyphen); always emit `name` even though source falls back to dir name",
    "Slash commands and rules have no file-sync target: commands are recipe-YAML aliases in global config.yaml only (project-level unsupported — converting a prompt command means authoring recipe YAML + editing global config); rule files must be merged into .goosehints/AGENTS.md or a skill",
    "MCP translation: target is YAML `extensions:` in global ~/.config/goose/config.yaml (no project JSON); rename command→cmd, env→envs (literal, plaintext YAML) and prefer env_keys for secrets (keyring-resolved); map http/sse→streamable_http (sse legacy-only); add goose-required keys name, enabled (no `disabled` flag), bundled, timeout, type; no ${VAR} expansion documented for envs"
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "yaml"
+  }
  },
  {
   "agent": "crush",
@@ -1615,6 +1711,10 @@
    "Skills: `name` must equal the containing dir name (case-insensitive) and match ^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$ (≤64 chars, no underscores/dots/spaces); description ≤1024, compatibility ≤500; metadata must be flat map[string]string; Claude's allowed-tools is silently ignored (route permissions to `permissions allow` instead); drop crush-unique user-invocable/disable-model-invocation when translating away.",
    "Hooks: only PreToolUse exists — drop PostToolUse/SessionStart/UserPromptSubmit/etc.; flatten Claude's nested hooks:[{type:command,...}] into flat {name?, matcher?, command, timeout?} (timeout default 30s vs Claude 60s); stdin field is `event` (rename from Claude's hook_event_name); output is flat decision/updated_input (snake_case, SHALLOW-merge patch — not Claude's hookSpecificOutput.permissionDecision / updatedInput full-replace); exit 49 (halt turn) is crush-specific.",
    "Subagents and slash commands unsupported as config: drop subagent files entirely; convert commands to user-invocable skills or drop; AGENTS.md is natively read (zero-copy) but so are CLAUDE.md/CRUSH.md/.cursorrules — avoid double-loading; no heading convention and no @import syntax (flatten includes); global instruction files are ~/.config/crush/CRUSH.md and ~/.config/AGENTS.md."
-  ]
+  ],
+  "agentlink": {
+   "hooks_format": "json",
+   "mcp_format": "json"
+  }
  }
 ]
