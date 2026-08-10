@@ -20,10 +20,17 @@ func TestRegisterInvalidPanics(t *testing.T) {
 	}{
 		{"empty id", Spec{DisplayNames: []string{"X"}}},
 		{"no display names", Spec{ID: "x"}},
-		{"bad event case", Spec{ID: "x", DisplayNames: []string{"X"}, HookEventCase: "shouty"}},
-		{"hooks file without format", Spec{ID: "x", DisplayNames: []string{"X"}, HooksFile: "hooks.json"}},
-		{"mcp file without format", Spec{ID: "x", DisplayNames: []string{"X"}, MCPFile: "mcp.json"}},
-		{"mcp file without table key", Spec{ID: "x", DisplayNames: []string{"X"}, MCPFile: "mcp.json", MCPFormat: MCPFormatJSON}},
+		{"bad event case", Spec{ID: "x", DisplayNames: []string{"X"}, Hooks: HookSpec{EventCase: "shouty"}}},
+		{"hooks file without format", Spec{ID: "x", DisplayNames: []string{"X"}, Hooks: HookSpec{File: "hooks.json"}}},
+		{"code hooks with file", Spec{ID: "x", DisplayNames: []string{"X"}, Hooks: HookSpec{Format: DialectCode, File: "hooks.json"}}},
+		{"code hooks with shape", Spec{ID: "x", DisplayNames: []string{"X"}, Hooks: HookSpec{Format: DialectCode, Shape: ShapeGroups}}},
+		{"code hooks with events", Spec{ID: "x", DisplayNames: []string{"X"}, Hooks: HookSpec{Format: DialectCode, EventCase: CasePascal, Events: []string{"Stop"}}}},
+		{"absent hooks with timeout unit", Spec{ID: "x", DisplayNames: []string{"X"}, Hooks: HookSpec{TimeoutUnit: TimeoutMilliseconds}}},
+		{"absent hooks with event map", Spec{ID: "x", DisplayNames: []string{"X"}, Hooks: HookSpec{EventMap: map[string]string{"Stop": "stop"}}}},
+		{"mcp file without format", Spec{ID: "x", DisplayNames: []string{"X"}, MCP: MCPSpec{File: "mcp.json"}}},
+		{"mcp table key without format", Spec{ID: "x", DisplayNames: []string{"X"}, MCP: MCPSpec{TableKey: "mcpServers"}}},
+		{"mcp env field without format", Spec{ID: "x", DisplayNames: []string{"X"}, MCP: MCPSpec{EnvField: "env"}}},
+		{"mcp file without table key", Spec{ID: "x", DisplayNames: []string{"X"}, MCP: MCPSpec{File: "mcp.json", Format: DialectJSON}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,7 +88,9 @@ func TestHookEventResolution(t *testing.T) {
 		{"copilot", "Stop", "agentStop", true},
 		{"copilot", "PostCompact", "postCompact", false},
 		{"gemini", "PreToolUse", "BeforeTool", true},
-		{"gemini", "UserPromptSubmit", "UserPromptSubmit", false},
+		{"gemini", "UserPromptSubmit", "BeforeAgent", true},
+		{"gemini", "Stop", "AfterAgent", true},
+		{"gemini", "SubagentStop", "SubagentStop", false},
 		{"hermes", "PreToolUse", "pre_tool_call", true},
 		{"hermes", "SubagentStart", "subagent_start", true},
 		{"hermes", "Notification", "notification", false},

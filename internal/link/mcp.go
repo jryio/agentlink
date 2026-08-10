@@ -1,20 +1,15 @@
 package link
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"reflect"
 	"strings"
 
-	"github.com/BurntSushi/toml"
-	"go.yaml.in/yaml/v3"
-
 	"github.com/jryio/agentlink/internal/agent"
 	"github.com/jryio/agentlink/internal/config"
+	"github.com/jryio/agentlink/internal/format"
 	"github.com/jryio/agentlink/internal/safefs"
 )
 
@@ -37,8 +32,8 @@ func (e *Engine) checkMCP(server config.MCPServer) PairReport {
 	if err != nil {
 		return mcpErrorReport(server, err)
 	}
-	leftConfig, leftErr := readStructured(leftRoot, left.Config.Path, e.doc.Config.MaxFileSize(), leftSpec.MCPFormat)
-	rightConfig, rightErr := readStructured(rightRoot, right.Config.Path, e.doc.Config.MaxFileSize(), rightSpec.MCPFormat)
+	leftConfig, leftErr := readStructured(leftRoot, left.Config.Path, e.doc.Config.MaxFileSize(), leftSpec.MCP.Format)
+	rightConfig, rightErr := readStructured(rightRoot, right.Config.Path, e.doc.Config.MaxFileSize(), rightSpec.MCP.Format)
 	leftMissing := errors.Is(leftErr, os.ErrNotExist)
 	rightMissing := errors.Is(rightErr, os.ErrNotExist)
 	switch {
@@ -61,14 +56,14 @@ func (e *Engine) checkMCP(server config.MCPServer) PairReport {
 		return report
 	}
 
-	leftEntry, leftFound := nestedMap(leftConfig, leftSpec.MCPTableKey, left.Server)
-	rightEntry, rightFound := nestedMap(rightConfig, rightSpec.MCPTableKey, right.Server)
+	leftEntry, leftFound := nestedMap(leftConfig, leftSpec.MCP.TableKey, left.Server)
+	rightEntry, rightFound := nestedMap(rightConfig, rightSpec.MCP.TableKey, right.Server)
 	// Goose extensions mix non-MCP types into the table; only stdio and
 	// streamable_http entries are MCP servers.
-	if leftFound && leftSpec.MCPTableKey == "extensions" && !gooseMCPServer(leftEntry) {
+	if leftFound && leftSpec.MCP.TableKey == "extensions" && !gooseMCPServer(leftEntry) {
 		leftFound = false
 	}
-	if rightFound && rightSpec.MCPTableKey == "extensions" && !gooseMCPServer(rightEntry) {
+	if rightFound && rightSpec.MCP.TableKey == "extensions" && !gooseMCPServer(rightEntry) {
 		rightFound = false
 	}
 	switch {
@@ -115,16 +110,29 @@ func gooseMCPServer(entry map[string]any) bool {
 // spec's env map field plus any env_vars passthrough list (codex).
 func envNames(entry map[string]any, spec agent.Spec) map[string]struct{} {
 	names := make(map[string]struct{})
-	if spec.MCPEnvField != "" {
-		if env, ok := asMap(entry[spec.MCPEnvField]); ok {
+	if spec.MCP.EnvField != "" {
+		if env, ok := asMap(entry[spec.MCP.EnvField]); ok {
 			for name := range env {
 				names[name] = struct{}{}
 			}
 		}
 	}
-	if forwarded, ok := entry["env_vars"].([]any); ok {
-		for _, value := range forwarded {
-			if name, ok := value.(string); ok {
+	// Codex's env_vars passthrough list accepts plain names and an object
+	// form ({name = "TOKEN", source = "local"}); both count as forwarded.
+	// TOML decodes object arrays as []map[string]any.
+	forwarded, _ := entry["env_vars"].([]any)
+	if tables, ok := entry["env_vars"].([]map[string]any); ok {
+		forwarded = make([]any, 0, len(tables))
+		for _, table := range tables {
+			forwarded = append(forwarded, table)
+		}
+	}
+	for _, value := range forwarded {
+		switch entry := value.(type) {
+		case string:
+			names[entry] = struct{}{}
+		case map[string]any:
+			if name, ok := entry["name"].(string); ok && name != "" {
 				names[name] = struct{}{}
 			}
 		}
@@ -132,101 +140,28 @@ func envNames(entry map[string]any, spec agent.Spec) map[string]struct{} {
 	return names
 }
 
-func readStructured(root *safefs.Root, filePath string, maxSize int64, format agent.MCPFormat) (map[string]any, error) {
+// readStructured parses an MCP configuration file through the shared
+// document codec. Decode errors are sanitized: decoder messages can echo
+// file content (potentially secrets) into findings.
+func readStructured(root *safefs.Root, filePath string, maxSize int64, dialect agent.Dialect) (map[string]any, error) {
 	data, _, err := root.ReadFile(filePath, maxSize)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]any)
-	switch format {
-	case agent.MCPFormatJSON, agent.MCPFormatJSONC:
-		if format == agent.MCPFormatJSONC {
-			data = stripJSONC(data)
+	result, err := format.DecodeDocument(dialect, data)
+	if err != nil {
+		label := map[agent.Dialect]string{
+			agent.DialectJSON:  "JSON",
+			agent.DialectJSONC: "JSON",
+			agent.DialectTOML:  "TOML",
+			agent.DialectYAML:  "YAML",
+		}[dialect]
+		if label == "" {
+			return nil, err // dialect vocabulary error: carries no file content
 		}
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&result); err != nil {
-			return nil, errors.New("decode JSON: invalid configuration")
-		}
-		var extra any
-		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-			if err == nil {
-				return nil, errors.New("decode JSON: multiple top-level values")
-			}
-			return nil, errors.New("decode JSON: invalid trailing content")
-		}
-	case agent.MCPFormatTOML:
-		if _, err := toml.Decode(string(data), &result); err != nil {
-			return nil, errors.New("decode TOML: invalid configuration")
-		}
-	case agent.MCPFormatYAML:
-		decoder := yaml.NewDecoder(bytes.NewReader(data))
-		if err := decoder.Decode(&result); err != nil {
-			return nil, errors.New("decode YAML: invalid configuration")
-		}
-		var extra any
-		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-			if err == nil {
-				return nil, errors.New("decode YAML: multiple documents")
-			}
-			return nil, errors.New("decode YAML: invalid trailing content")
-		}
-	default:
-		return nil, fmt.Errorf("unsupported configuration format %q for %s", format, filePath)
+		return nil, errors.New("decode " + label + ": invalid configuration")
 	}
 	return result, nil
-}
-
-// stripJSONC removes // and /* */ comments and trailing commas while
-// preserving string contents.
-func stripJSONC(data []byte) []byte {
-	var out bytes.Buffer
-	out.Grow(len(data))
-	inString := false
-	escaped := false
-	for i := 0; i < len(data); i++ {
-		c := data[i]
-		switch {
-		case inString:
-			out.WriteByte(c)
-			switch {
-			case escaped:
-				escaped = false
-			case c == '\\':
-				escaped = true
-			case c == '"':
-				inString = false
-			}
-		case c == '"':
-			inString = true
-			out.WriteByte(c)
-		case c == '/' && i+1 < len(data) && data[i+1] == '/':
-			for i < len(data) && data[i] != '\n' {
-				i++
-			}
-			if i < len(data) {
-				out.WriteByte('\n')
-			}
-		case c == '/' && i+1 < len(data) && data[i+1] == '*':
-			for i+1 < len(data) && (data[i] != '*' || data[i+1] != '/') {
-				i++
-			}
-			i++
-		case c == ',':
-			// Drop a comma whose next significant byte closes a container.
-			j := i + 1
-			for j < len(data) && (data[j] == ' ' || data[j] == '\t' || data[j] == '\n' || data[j] == '\r') {
-				j++
-			}
-			if j < len(data) && (data[j] == '}' || data[j] == ']') {
-				continue
-			}
-			out.WriteByte(c)
-		default:
-			out.WriteByte(c)
-		}
-	}
-	return out.Bytes()
 }
 
 // nestedMap walks a dot-separated table key (e.g. "amp.mcpServers") and

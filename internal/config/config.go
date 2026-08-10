@@ -17,7 +17,9 @@ import (
 
 const (
 	// CurrentVersion is the configuration format understood by this build.
-	CurrentVersion  = 1
+	// Version 2 replaced fixed claude:/codex: endpoint keys with peers: maps
+	// keyed by registered agent ID.
+	CurrentVersion  = 2
 	defaultMaxSize  = 4 << 20
 	defaultMaxFiles = 25_000
 
@@ -60,15 +62,52 @@ type Source struct {
 	Optional   bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
+// Kind is the shape of a pair's peer endpoints: one file, a directory tree,
+// or same-named files distributed across sibling directories.
+type Kind string
+
+// Pair endpoint shapes.
+const (
+	KindFile     Kind = "file"
+	KindTree     Kind = "tree"
+	KindSiblings Kind = "siblings"
+)
+
+// Normalizer selects how a pair's artifacts are canonicalized for
+// comparison. The zero value defaults to text comparison; semantic
+// normalizers (instructions, skill, hook) run the matching formatter.
+type Normalizer string
+
+// Comparison normalizers.
+const (
+	NormalizerExact        Normalizer = "exact"
+	NormalizerText         Normalizer = "text"
+	NormalizerInstructions Normalizer = "instructions"
+	NormalizerSkill        Normalizer = "skill"
+	NormalizerHook         Normalizer = "hook"
+	NormalizerPresence     Normalizer = "presence"
+)
+
+// SyncMode is a pair's reconciliation policy. The zero value derives the
+// policy from the normalizer: copy for exact/text, manual otherwise.
+type SyncMode string
+
+// Reconciliation policies.
+const (
+	SyncManual    SyncMode = "manual"
+	SyncCopy      SyncMode = "copy"
+	SyncTranslate SyncMode = "translate"
+)
+
 // Pair maps two agents' peer artifacts. Peers is keyed by registered agent ID
 // (see internal/agent); the canonical hub store uses the reserved ID "agents".
 type Pair struct {
 	ID         string              `yaml:"id" json:"id"`
 	Name       string              `yaml:"name,omitempty" json:"name,omitempty"`
-	Kind       string              `yaml:"kind" json:"kind"`
+	Kind       Kind                `yaml:"kind" json:"kind"`
 	Peers      map[string]Endpoint `yaml:"peers" json:"peers"`
-	Normalizer string              `yaml:"normalizer,omitempty" json:"normalizer,omitempty"`
-	Sync       string              `yaml:"sync,omitempty" json:"sync,omitempty"`
+	Normalizer Normalizer          `yaml:"normalizer,omitempty" json:"normalizer,omitempty"`
+	Sync       SyncMode            `yaml:"sync,omitempty" json:"sync,omitempty"`
 	Ignore     []string            `yaml:"ignore,omitempty" json:"ignore,omitempty"`
 	Optional   bool                `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
@@ -201,7 +240,7 @@ func (c *Config) MaxFiles() int {
 func (c *Config) Validate() error {
 	var errs []error
 	if c.Version != CurrentVersion {
-		errs = append(errs, fmt.Errorf("version: got %d, want %d", c.Version, CurrentVersion))
+		errs = append(errs, fmt.Errorf("version: got %d, want %d (the peers: map format; see CHANGELOG.md)", c.Version, CurrentVersion))
 	}
 	if len(c.Sources) == 0 {
 		errs = append(errs, errors.New("sources: define at least one source"))
@@ -256,13 +295,17 @@ func (c *Config) Validate() error {
 		}
 		seen[pair.ID] = struct{}{}
 		artifactSeen[pair.ID] = struct{}{}
-		if pair.Kind != "file" && pair.Kind != "tree" && pair.Kind != "siblings" {
+		switch pair.Kind {
+		case KindFile, KindTree, KindSiblings:
+		default:
 			errs = append(errs, fmt.Errorf("%s.kind: must be file, tree, or siblings", prefix))
 		}
 		if !validNormalizer(pair.Normalizer) {
 			errs = append(errs, fmt.Errorf("%s.normalizer: must be exact, text, instructions, skill, hook, or presence", prefix))
 		}
-		if pair.Sync != "" && pair.Sync != "manual" && pair.Sync != "copy" && pair.Sync != "translate" {
+		switch pair.Sync {
+		case "", SyncManual, SyncCopy, SyncTranslate:
+		default:
 			errs = append(errs, fmt.Errorf("%s.sync: must be manual, copy, or translate", prefix))
 		}
 		if len(pair.Peers) != 2 {
@@ -276,17 +319,17 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Errorf("%s.peers: unknown agent %q", prefix, id))
 				continue
 			}
-			if pair.Kind == "siblings" && (path.Base(endpoint.Path) != endpoint.Path || endpoint.Path == ".") {
+			if pair.Kind == KindSiblings && (path.Base(endpoint.Path) != endpoint.Path || endpoint.Path == ".") {
 				errs = append(errs, fmt.Errorf("%s.peers.%s.path: siblings path must be a file name", prefix, id))
 			}
-			if pair.Kind == "file" && endpoint.Path == "." {
+			if pair.Kind == KindFile && endpoint.Path == "." {
 				errs = append(errs, fmt.Errorf("%s: file endpoints must name files, not source roots", prefix))
 			}
-			if pair.Sync == "translate" {
+			if pair.Sync == SyncTranslate {
 				switch pair.Normalizer {
-				case "skill", "instructions":
-				case "hook":
-					if spec.HooksFormat == agent.HookFormatNone || spec.HooksFormat == agent.HookFormatCode {
+				case NormalizerSkill, NormalizerInstructions:
+				case NormalizerHook:
+					if spec.Hooks.Format == agent.DialectNone || spec.Hooks.Format == agent.DialectCode {
 						errs = append(errs, fmt.Errorf("%s: agent %q has no declarative hook file", prefix, id))
 					}
 				default:
@@ -323,7 +366,7 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Errorf("%s.peers: unknown agent %q", prefix, id))
 				continue
 			}
-			if spec.MCPFormat == agent.MCPFormatNone {
+			if spec.MCP.Format == agent.DialectNone {
 				errs = append(errs, fmt.Errorf("%s: agent %q has no MCP configuration", prefix, id))
 			}
 			if strings.TrimSpace(peer.Server) == "" {
@@ -408,9 +451,9 @@ func validateEndpoint(prefix string, endpoint Endpoint, sources map[string]Sourc
 	return errs
 }
 
-func validNormalizer(name string) bool {
+func validNormalizer(name Normalizer) bool {
 	switch name {
-	case "", "exact", "text", "instructions", "skill", "hook", "presence":
+	case "", NormalizerExact, NormalizerText, NormalizerInstructions, NormalizerSkill, NormalizerHook, NormalizerPresence:
 		return true
 	default:
 		return false

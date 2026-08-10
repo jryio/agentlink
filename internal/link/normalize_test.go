@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jryio/agentlink/internal/agent"
+	"github.com/jryio/agentlink/internal/config"
 )
 
 func testParams(t *testing.T, self, other string) Params {
@@ -26,7 +27,7 @@ func TestNormalizePresets(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		preset      string
+		preset      config.Normalizer
 		left        string
 		leftParams  Params
 		right       string
@@ -38,6 +39,11 @@ func TestNormalizePresets(t *testing.T) {
 			"instruction titles", "instructions",
 			"# Claude Code rules\nUse Claude Code and Codex.\n", testParams(t, "claude", "codex"),
 			"# Codex rules\nUse Claude and Codex.\n", testParams(t, "codex", "claude"),
+		},
+		{
+			"instruction names overlap", "instructions",
+			"# Agent instructions\nUse Oh My Pi.\n", testParams(t, "pi", "omp"),
+			"# Agent instructions\nUse Oh My Pi.\n", testParams(t, "omp", "pi"),
 		},
 		{
 			"skill drops tool-only keys", "skill",

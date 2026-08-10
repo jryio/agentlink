@@ -14,7 +14,7 @@ func Schema() []byte { return slices.Clone(schema) }
 // Sample returns a small project-local configuration with editor schema wiring.
 func Sample() []byte {
 	return []byte(`# yaml-language-server: $schema=./agentlink.schema.json
-version: 1
+version: 2
 
 sources:
   project:

@@ -11,13 +11,15 @@ func init() {
 		ConfigDir:    ".pi",
 		GlobalDir:    "~/.pi/agent",
 		Instructions: []string{"AGENTS.md"},
-		SkillsDir:    ".pi/skills",
-		NativeAgents: true,
-		SkillKeys: []string{
-			"name", "description", "license", "compatibility", "metadata",
-			"allowed-tools", "disable-model-invocation",
+		Skills: SkillSpec{
+			Dir:          ".pi/skills",
+			NativeAgents: true,
+			Keys: []string{
+				"name", "description", "license", "compatibility", "metadata",
+				"allowed-tools", "disable-model-invocation",
+			},
 		},
-		HooksFormat: HookFormatCode,
-		MCPFormat:   MCPFormatNone,
+		Hooks: HookSpec{Format: DialectCode},
+		MCP:   MCPSpec{Format: DialectNone},
 	})
 }

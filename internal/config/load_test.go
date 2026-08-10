@@ -32,7 +32,7 @@ func TestLoadRejectsUnknownField(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agentlink.yaml")
-	data := strings.Replace(string(Sample()), "version: 1", "version: 1\nunknown: true", 1)
+	data := strings.Replace(string(Sample()), "version: 2", "version: 2\nunknown: true", 1)
 	writeFile(t, path, []byte(data))
 	if _, err := Load(path, dir); err == nil || !strings.Contains(err.Error(), "field unknown not found") {
 		t.Fatalf("Load() error = %v, want unknown field error", err)
@@ -153,7 +153,7 @@ func TestLoadRejectsMultipleDocuments(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agentlink.yaml")
-	writeFile(t, path, append(Sample(), []byte("---\nversion: 1\n")...))
+	writeFile(t, path, append(Sample(), []byte("---\nversion: 2\n")...))
 	if _, err := Load(path, dir); err == nil || !strings.Contains(err.Error(), "multiple YAML documents") {
 		t.Fatalf("Load(multiple documents) error = %v", err)
 	}
@@ -188,7 +188,7 @@ func TestLoadRejectsAliasedAndOverlappingEndpoints(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "agentlink.yaml")
-			data := []byte("version: 1\nsources:\n  a: {root: .}\n  b: {root: .}\npairs:\n  - id: peers\n    kind: " + test.kind + "\n    peers:\n      claude: {source: a, path: " + test.claude + "}\n      codex: {source: b, path: " + test.codex + "}\n")
+			data := []byte("version: 2\nsources:\n  a: {root: .}\n  b: {root: .}\npairs:\n  - id: peers\n    kind: " + test.kind + "\n    peers:\n      claude: {source: a, path: " + test.claude + "}\n      codex: {source: b, path: " + test.codex + "}\n")
 			writeFile(t, path, data)
 			if _, err := Load(path, dir); err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("Load() error = %v, want %q", err, test.wantErr)
@@ -208,7 +208,7 @@ func TestLoadRejectsOverlappingEndpointsThroughSourceSymlink(t *testing.T) {
 	}
 	configDir := t.TempDir()
 	configPath := filepath.Join(configDir, "agentlink.yaml")
-	data := []byte("version: 1\nsources:\n  real: {root: " + realRoot + "}\n  alias: {root: " + aliasRoot + "}\npairs:\n  - id: skills\n    kind: tree\n    peers:\n      claude: {source: real, path: skills}\n      codex: {source: alias, path: skills/codex}\n")
+	data := []byte("version: 2\nsources:\n  real: {root: " + realRoot + "}\n  alias: {root: " + aliasRoot + "}\npairs:\n  - id: skills\n    kind: tree\n    peers:\n      claude: {source: real, path: skills}\n      codex: {source: alias, path: skills/codex}\n")
 	writeFile(t, configPath, data)
 
 	if _, err := Load(configPath, configDir); err == nil || !strings.Contains(err.Error(), "overlap") {
@@ -220,5 +220,21 @@ func writeFile(t testing.TB, path string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("os.WriteFile(%q): %v", path, err)
+	}
+}
+
+func TestLoadRejectsLegacyEndpointKeys(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agentlink.yaml")
+	legacy := "version: 1\nsources:\n  project: {root: .}\npairs:\n  - id: skills\n    kind: tree\n    claude: {source: project, path: .claude/skills}\n    codex: {source: project, path: .codex/skills}\n"
+	writeFile(t, path, []byte(legacy))
+	_, err := Load(path, dir)
+	if err == nil {
+		t.Fatal("Load() succeeded with version-1 claude:/codex: keys")
+	}
+	if got := err.Error(); !strings.Contains(got, "peers:") || !strings.Contains(got, "version: 2") {
+		t.Fatalf("Load() error = %q, want migration guidance naming peers: and version: 2", got)
 	}
 }

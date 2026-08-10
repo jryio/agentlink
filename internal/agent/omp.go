@@ -11,14 +11,18 @@ func init() {
 		ConfigDir:    ".omp",
 		GlobalDir:    "~/.omp/agent",
 		Instructions: []string{"AGENTS.md"},
-		SkillsDir:    ".omp/skills",
-		NativeAgents: true,
-		SkillKeys:    []string{"name", "description", "globs", "alwaysApply", "hide", "disableModelInvocation"},
-		SkillRenames: map[string]string{"disable-model-invocation": "disableModelInvocation"},
-		HooksFormat:  HookFormatCode,
-		MCPFile:      ".omp/mcp.json",
-		MCPFormat:    MCPFormatJSON,
-		MCPTableKey:  "mcpServers",
-		MCPEnvField:  "env",
+		Skills: SkillSpec{
+			Dir:          ".omp/skills",
+			NativeAgents: true,
+			Keys:         []string{"name", "description", "globs", "alwaysApply", "hide", "disableModelInvocation"},
+			Renames:      map[string]string{"disable-model-invocation": "disableModelInvocation"},
+		},
+		Hooks: HookSpec{Format: DialectCode},
+		MCP: MCPSpec{
+			File:     ".omp/mcp.json",
+			Format:   DialectJSON,
+			TableKey: "mcpServers",
+			EnvField: "env",
+		},
 	})
 }

@@ -10,13 +10,17 @@ func init() {
 		ConfigDir:    ".kilo",
 		GlobalDir:    "~/.config/kilo",
 		Instructions: []string{"AGENTS.md"},
-		SkillsDir:    ".kilo/skills",
-		NativeAgents: true,
-		SkillKeys:    []string{"name", "description", "license", "compatibility", "metadata"},
-		HooksFormat:  HookFormatCode,
-		MCPFile:      "kilo.jsonc",
-		MCPFormat:    MCPFormatJSONC,
-		MCPTableKey:  "mcp",
-		MCPEnvField:  "environment",
+		Skills: SkillSpec{
+			Dir:          ".kilo/skills",
+			NativeAgents: true,
+			Keys:         []string{"name", "description", "license", "compatibility", "metadata"},
+		},
+		Hooks: HookSpec{Format: DialectCode},
+		MCP: MCPSpec{
+			File:     "kilo.jsonc",
+			Format:   DialectJSONC,
+			TableKey: "mcp",
+			EnvField: "environment",
+		},
 	})
 }

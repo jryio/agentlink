@@ -53,6 +53,18 @@ func TestSampleForDetection(t *testing.T) {
 			nil,
 		},
 		{
+			"copilot hooks dir detects without instructions file",
+			[]string{".github/hooks/"},
+			[]string{"copilot-instructions", "copilot-hooks"},
+			nil,
+		},
+		{
+			"copilot settings dir detects without instructions file",
+			[]string{".github/copilot/"},
+			[]string{"copilot-instructions"},
+			nil,
+		},
+		{
 			"crush root file detection",
 			[]string{"crush.json"},
 			[]string{"crush-hooks", "crush: {source: project, path: crush.json}"},

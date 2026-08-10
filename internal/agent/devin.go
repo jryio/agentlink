@@ -5,28 +5,34 @@ package agent
 // PreCompact counterpart.
 func init() {
 	Register(Spec{
-		ID:            "devin",
-		DocsURL:       "https://docs.devin.ai/cli",
-		DisplayNames:  []string{"Devin"},
-		ConfigDir:     ".devin",
-		GlobalDir:     "~/.config/devin",
-		Instructions:  []string{"AGENTS.md"},
-		SkillsDir:     ".devin/skills",
-		NativeAgents:  true,
-		SkillKeys:     []string{"name", "description", "argument-hint", "model", "subagent", "agent", "allowed-tools", "permissions", "triggers"},
-		HooksFile:     ".devin/hooks.v1.json",
-		HooksFormat:   HookFormatJSON,
-		HooksShape:    ShapeGroups,
-		HooksWrapper:  WrapperBare,
-		HookEventCase: CasePascal,
-		HookEventMap:  map[string]string{"PostCompact": "PostCompaction"},
-		HookEvents: []string{
-			"PreToolUse", "PostToolUse", "PermissionRequest", "UserPromptSubmit",
-			"Stop", "PostCompaction", "SessionStart", "SessionEnd",
+		ID:           "devin",
+		DocsURL:      "https://docs.devin.ai/cli",
+		DisplayNames: []string{"Devin"},
+		ConfigDir:    ".devin",
+		GlobalDir:    "~/.config/devin",
+		Instructions: []string{"AGENTS.md"},
+		Skills: SkillSpec{
+			Dir:          ".devin/skills",
+			NativeAgents: true,
+			Keys:         []string{"name", "description", "argument-hint", "model", "subagent", "agent", "allowed-tools", "permissions", "triggers"},
 		},
-		MCPFile:     ".devin/mcp_config.json",
-		MCPFormat:   MCPFormatJSONC,
-		MCPTableKey: "mcpServers",
-		MCPEnvField: "env",
+		Hooks: HookSpec{
+			File:      ".devin/hooks.v1.json",
+			Format:    DialectJSON,
+			Shape:     ShapeGroups,
+			Wrapper:   WrapperBare,
+			EventCase: CasePascal,
+			EventMap:  map[string]string{"PostCompact": "PostCompaction"},
+			Events: []string{
+				"PreToolUse", "PostToolUse", "PermissionRequest", "UserPromptSubmit",
+				"Stop", "PostCompaction", "SessionStart", "SessionEnd",
+			},
+		},
+		MCP: MCPSpec{
+			File:     ".devin/mcp_config.json",
+			Format:   DialectJSONC,
+			TableKey: "mcpServers",
+			EnvField: "env",
+		},
 	})
 }

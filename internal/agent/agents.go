@@ -5,23 +5,29 @@ package agent
 // target translates to and from.
 func init() {
 	Register(Spec{
-		ID:            "agents",
-		DocsURL:       "https://github.com/jryio/agentlink",
-		DisplayNames:  []string{"Agent"},
-		ConfigDir:     ".agents",
-		Instructions:  []string{"AGENTS.md"},
-		SkillsDir:     "skills",
-		NativeAgents:  true,
-		SkillKeys:     U,
-		HooksFile:     "hooks.json",
-		HooksFormat:   HookFormatJSON,
-		HooksShape:    ShapeGroups,
-		HooksWrapper:  WrapperBare,
-		HookEventCase: CasePascal,
-		HookEvents:    CanonicalEvents,
-		MCPFile:       "mcp.json",
-		MCPFormat:     MCPFormatJSON,
-		MCPTableKey:   "mcpServers",
-		MCPEnvField:   "env",
+		ID:           HubID,
+		DocsURL:      "https://github.com/jryio/agentlink",
+		DisplayNames: []string{"Agent"},
+		ConfigDir:    ".agents",
+		Instructions: []string{"AGENTS.md"},
+		Skills: SkillSpec{
+			Dir:          "skills",
+			NativeAgents: true,
+			Keys:         U,
+		},
+		Hooks: HookSpec{
+			File:      "hooks.json",
+			Format:    DialectJSON,
+			Shape:     ShapeGroups,
+			Wrapper:   WrapperBare,
+			EventCase: CasePascal,
+			Events:    CanonicalEvents,
+		},
+		MCP: MCPSpec{
+			File:     "mcp.json",
+			Format:   DialectJSON,
+			TableKey: "mcpServers",
+			EnvField: "env",
+		},
 	})
 }

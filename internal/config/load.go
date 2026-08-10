@@ -70,6 +70,38 @@ func Find(explicit, cwd string) (string, error) {
 	return "", errors.New("no agentlink.yaml found; run `agentlink init` or pass --config")
 }
 
+// rejectLegacyKeys detects version-1 configurations before strict decoding
+// rejects them with a bare unknown-field error. Version 1 keyed pair and MCP
+// endpoints by fixed claude:/codex: fields; version 2 uses peers: maps keyed
+// by registered agent ID.
+func rejectLegacyKeys(path string, data []byte) error {
+	var probe struct {
+		Pairs      []map[string]any `yaml:"pairs"`
+		MCPServers []map[string]any `yaml:"mcp_servers"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return nil // not decodable at all; the strict decoder reports it better
+	}
+	usesLegacyKeys := func(entry map[string]any) bool {
+		if _, ok := entry["claude"]; ok {
+			return true
+		}
+		_, ok := entry["codex"]
+		return ok
+	}
+	for _, entry := range probe.Pairs {
+		if usesLegacyKeys(entry) {
+			return fmt.Errorf("decode config %s: version-1 claude:/codex: endpoint keys are no longer supported; rewrite endpoints as a peers: map keyed by agent ID and set version: %d (see CHANGELOG.md)", path, CurrentVersion)
+		}
+	}
+	for _, entry := range probe.MCPServers {
+		if usesLegacyKeys(entry) {
+			return fmt.Errorf("decode config %s: version-1 claude:/codex: endpoint keys are no longer supported; rewrite endpoints as a peers: map keyed by agent ID and set version: %d (see CHANGELOG.md)", path, CurrentVersion)
+		}
+	}
+	return nil
+}
+
 // Load reads, strictly decodes, validates, and resolves a configuration.
 func Load(file, cwd string) (*Document, error) {
 	path, err := absolute(file, cwd)
@@ -83,6 +115,9 @@ func Load(file, cwd string) (*Document, error) {
 	data, err := readConfined(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	if err := rejectLegacyKeys(path, data); err != nil {
+		return nil, err
 	}
 	var cfg Config
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -146,7 +181,7 @@ func validateResolvedEndpoints(doc *Document) error {
 		if endpointsEqual(rootIdentities, left, right) {
 			return fmt.Errorf("pair %q endpoints resolve to the same path %s", pair.ID, leftPath)
 		}
-		if pair.Kind == "tree" && endpointsOverlap(rootIdentities, left, right) {
+		if pair.Kind == KindTree && endpointsOverlap(rootIdentities, left, right) {
 			return fmt.Errorf("pair %q tree endpoints overlap: %s and %s", pair.ID, leftPath, rightPath)
 		}
 	}

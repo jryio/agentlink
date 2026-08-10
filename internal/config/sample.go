@@ -31,7 +31,7 @@ func SampleFor(dir string) ([]byte, error) {
 # Canonical artifacts live in .agents (and AGENTS.md); each detected agent is
 # peered against that hub. Most agents read .agents/skills natively — only
 # agents that cannot need an activation or pair here.
-version: 1
+version: 2
 
 sources:
   project:
@@ -70,14 +70,14 @@ pairs:
 
 `, spec.ID, kind, spec.ID, primary)
 		}
-		if !spec.NativeAgents && spec.SkillsDir != "" {
+		if !spec.Skills.NativeAgents && spec.Skills.Dir != "" {
 			fmt.Fprintf(&activations, `  - id: %s-skills-live
     expected: {source: project, path: .agents/skills}
     live: {source: project, path: %s}
     optional: true
-`, spec.ID, spec.SkillsDir)
+`, spec.ID, spec.Skills.Dir)
 		}
-		if spec.HooksFile != "" {
+		if spec.Hooks.File != "" {
 			fmt.Fprintf(&out, `  - id: %s-hooks
     kind: file
     peers:
@@ -87,7 +87,7 @@ pairs:
     sync: translate
     optional: true
 
-`, spec.ID, spec.ID, spec.HooksFile)
+`, spec.ID, spec.ID, spec.Hooks.File)
 		}
 	}
 	if detected == 0 {

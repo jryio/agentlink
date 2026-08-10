@@ -36,7 +36,7 @@ func TestReadStructuredFormats(t *testing.T) {
 		t.Fatalf("Root(workspace): %v", err)
 	}
 	for _, extension := range []string{"json", "toml", "yaml"} {
-		format := map[string]agent.MCPFormat{"json": agent.MCPFormatJSON, "toml": agent.MCPFormatTOML, "yaml": agent.MCPFormatYAML}[extension]
+		format := map[string]agent.Dialect{"json": agent.DialectJSON, "toml": agent.DialectTOML, "yaml": agent.DialectYAML}[extension]
 		values, err := readStructured(root, "config."+extension, 1024, format)
 		if err != nil {
 			t.Errorf("readStructured(%s): %v", extension, err)
@@ -47,27 +47,27 @@ func TestReadStructuredFormats(t *testing.T) {
 		}
 	}
 	writeTestFile(t, filepath.Join(dir, "config.jsonc"), "// comment\n{\"value\":\"jsonc\",}\n")
-	values, err := readStructured(root, "config.jsonc", 1024, agent.MCPFormatJSONC)
+	values, err := readStructured(root, "config.jsonc", 1024, agent.DialectJSONC)
 	if err != nil {
 		t.Fatalf("readStructured(jsonc): %v", err)
 	}
 	if values["value"] != "jsonc" {
 		t.Errorf("readStructured(jsonc)[value] = %v", values["value"])
 	}
-	if _, err := readStructured(root, "config.txt", 1024, agent.MCPFormatNone); err == nil {
+	if _, err := readStructured(root, "config.txt", 1024, agent.DialectNone); err == nil {
 		t.Fatal("readStructured(unsupported format) succeeded, want error")
 	}
 	for _, name := range []string{"multiple.json", "multiple.yaml"} {
-		format := agent.MCPFormatJSON
+		format := agent.DialectJSON
 		if strings.HasSuffix(name, ".yaml") {
-			format = agent.MCPFormatYAML
+			format = agent.DialectYAML
 		}
 		if _, err := readStructured(root, name, 1024, format); err == nil {
 			t.Errorf("readStructured(%s) succeeded, want multiple-value error", name)
 		}
 	}
 	writeTestFile(t, filepath.Join(dir, "secret.json"), `{"token":"do-not-print"`)
-	if _, err := readStructured(root, "secret.json", 1024, agent.MCPFormatJSON); err == nil || strings.Contains(err.Error(), "do-not-print") {
+	if _, err := readStructured(root, "secret.json", 1024, agent.DialectJSON); err == nil || strings.Contains(err.Error(), "do-not-print") {
 		t.Fatalf("readStructured(secret) error = %v, want redacted decode error", err)
 	}
 }
@@ -235,5 +235,37 @@ func TestMCPReadErrorTakesPriorityOverMissingPeer(t *testing.T) {
 	}
 	if strings.Contains(report.Pairs[0].Findings[0].Detail, "do-not-print") {
 		t.Fatal("MCP read finding leaked malformed secret content")
+	}
+}
+
+func TestMCPCodexEnvVarsObjectForm(t *testing.T) {
+	t.Parallel()
+
+	// Codex's env_vars accepts {name, source} objects as well as plain
+	// strings; both count as forwarding the key.
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, ".mcp.json"), `{"mcpServers":{"tasks":{"command":"x","env":{"TOKEN":"s3cret"}}}}`)
+	writeTestFile(t, filepath.Join(dir, ".codex", "config.toml"), "[mcp_servers.tasks]\ncommand = \"x\"\nenv_vars = [{name = \"TOKEN\", source = \"local\"}]\n")
+	doc := testDocument(dir)
+	doc.Config.MCPServers = []config.MCPServer{{
+		ID: "mcp",
+		Peers: map[string]config.MCPPeer{
+			"claude": {Config: config.Endpoint{Source: "workspace", Path: ".mcp.json"}, Server: "tasks"},
+			"codex":  {Config: config.Endpoint{Source: "workspace", Path: ".codex/config.toml"}, Server: "tasks"},
+		},
+		RequiredEnv: []string{"TOKEN"},
+	}}
+	roots, err := safefs.Open(doc)
+	if err != nil {
+		t.Fatalf("safefs.Open(): %v", err)
+	}
+	t.Cleanup(func() { _ = roots.Close() })
+	engine, err := New(doc, roots)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	report := engine.Check(t.Context(), map[string]bool{"mcp": true})
+	if !report.Clean() {
+		t.Fatalf("Check() = %+v, want clean: object-form env_vars forwards TOKEN", report)
 	}
 }

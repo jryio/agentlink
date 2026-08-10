@@ -1,4 +1,6 @@
-// Package link compares and reconciles configured Claude/Codex peer artifacts.
+// Package link compares and reconciles configured peer artifacts between any
+// registered coding agents (see internal/agent), including the canonical
+// .agents hub.
 package link
 
 import (
@@ -223,7 +225,7 @@ func (e *Engine) checkPair(ctx context.Context, runtime pairRuntime) PairReport 
 	if err != nil {
 		return errorReport(pair, err)
 	}
-	if pair.Kind == "file" {
+	if pair.Kind == config.KindFile {
 		report.Files = 1
 		finding := e.compareFile(ctx, runtime, leftRoot, left.Path, rightRoot, right.Path, ".")
 		if finding != nil {
@@ -233,7 +235,7 @@ func (e *Engine) checkPair(ctx context.Context, runtime pairRuntime) PairReport 
 		}
 		return report
 	}
-	if pair.Kind == "siblings" {
+	if pair.Kind == config.KindSiblings {
 		return e.checkSiblings(ctx, runtime, leftRoot, rightRoot)
 	}
 	return e.checkTree(ctx, runtime, leftRoot, rightRoot)
@@ -473,7 +475,7 @@ func endpointPath(base, rel string) string {
 }
 
 func peerPath(pair config.Pair, endpoint config.Endpoint, rel string) string {
-	if pair.Kind == "siblings" {
+	if pair.Kind == config.KindSiblings {
 		if rel == "." {
 			return endpoint.Path
 		}

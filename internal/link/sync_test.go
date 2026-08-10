@@ -282,3 +282,66 @@ func TestPlanSyncRejectsDuplicateTargets(t *testing.T) {
 		t.Fatalf("PlanSync() error = %v, want duplicate target rejection", err)
 	}
 }
+
+func TestTranslateFromSpokeCanonicalizesSource(t *testing.T) {
+	t.Parallel()
+
+	// Regression: a spoke as sync --from source must be canonicalized before
+	// the target formatter runs. Previously the formatter assumed canonical
+	// input, dropped the spoke's wrapper keys as unsupported events, and
+	// atomically overwrote the hub hooks with an empty document.
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, ".agents", "hooks.json"), `{"SessionStart": [{"hooks": [{"type": "command", "command": "stale"}]}]}
+`)
+	writeTestFile(t, filepath.Join(dir, ".claude", "settings.json"), `{
+  "model": "opus",
+  "hooks": {"PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "agentlink remind --agent claude", "timeout": 45}]}]}
+}
+`)
+	doc := testDocument(dir)
+	doc.Config.Pairs = []config.Pair{{
+		ID: "hooks", Kind: "file", Normalizer: "hook", Sync: "translate",
+		Peers: map[string]config.Endpoint{
+			"agents": {Source: "workspace", Path: ".agents/hooks.json"},
+			"claude": {Source: "workspace", Path: ".claude/settings.json"},
+		},
+	}}
+	engine, closeEngine := newEngine(t, doc)
+	t.Cleanup(closeEngine)
+
+	plan, err := engine.PlanSync(t.Context(), Side("claude"), false, nil)
+	if err != nil {
+		t.Fatalf("PlanSync(): %v", err)
+	}
+	if len(plan.Operations) != 1 || plan.Operations[0].Transform != "hook" {
+		t.Fatalf("PlanSync() = %+v, want one translate operation", plan)
+	}
+	if err := engine.Apply(t.Context(), plan); err != nil {
+		t.Fatalf("Apply(): %v", err)
+	}
+	roots, err := safefs.Open(doc)
+	if err != nil {
+		t.Fatalf("safefs.Open(): %v", err)
+	}
+	t.Cleanup(func() { _ = roots.Close() })
+	workspace, err := roots.Root("workspace")
+	if err != nil {
+		t.Fatalf("Root(workspace): %v", err)
+	}
+	data, _, err := workspace.ReadFile(".agents/hooks.json", 1<<20)
+	if err != nil {
+		t.Fatalf("ReadFile(hooks.json): %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{`"PostToolUse"`, `"matcher": "Bash"`, `"agentlink remind --agent agent"`, `"timeout": 45`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("hub hooks missing %q after spoke sync:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"model"`) || strings.Contains(text, "stale") {
+		t.Errorf("hub hooks contaminated by wrapper keys or stale content:\n%s", text)
+	}
+	if report := engine.Check(t.Context(), nil); !report.Clean() {
+		t.Fatalf("post-translate Check() = %+v, want clean", report)
+	}
+}

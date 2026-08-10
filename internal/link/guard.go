@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/jryio/agentlink/internal/config"
 )
 
 // Violation explains why a touched peer artifact is unsafe to finalize.
@@ -89,7 +91,7 @@ func (e *Engine) touched(changed []string) (map[string]map[string]bool, error) {
 		changedPath = filepath.Clean(changedPath)
 		for _, runtime := range e.pairs {
 			pair := runtime.pair
-			if pair.Kind == "siblings" {
+			if pair.Kind == config.KindSiblings {
 				for _, endpoint := range pair.Peers {
 					rootPath := e.doc.Roots[endpoint.Source]
 					rel, relErr := filepath.Rel(rootPath, changedPath)
@@ -137,8 +139,8 @@ func (e *Engine) touched(changed []string) (map[string]map[string]bool, error) {
 	return result, nil
 }
 
-func endpointRelative(changedPath, base, kind string) (string, bool) {
-	if kind == "file" {
+func endpointRelative(changedPath, base string, kind config.Kind) (string, bool) {
+	if kind == config.KindFile {
 		return ".", changedPath == filepath.Clean(base)
 	}
 	rel, err := filepath.Rel(base, changedPath)

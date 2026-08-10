@@ -12,13 +12,17 @@ func init() {
 		ConfigDir:    ".amp",
 		GlobalDir:    "~/.config/amp",
 		Instructions: []string{"AGENTS.md"},
-		SkillsDir:    ".agents/skills",
-		NativeAgents: true,
-		SkillKeys:    []string{"name", "description", "mcpServers"},
-		HooksFormat:  HookFormatCode,
-		MCPFile:      ".amp/settings.json",
-		MCPFormat:    MCPFormatJSONC,
-		MCPTableKey:  "amp.mcpServers",
-		MCPEnvField:  "env",
+		Skills: SkillSpec{
+			Dir:          ".agents/skills",
+			NativeAgents: true,
+			Keys:         []string{"name", "description", "mcpServers"},
+		},
+		Hooks: HookSpec{Format: DialectCode},
+		MCP: MCPSpec{
+			File:     ".amp/settings.json",
+			Format:   DialectJSONC,
+			TableKey: "amp.mcpServers",
+			EnvField: "env",
+		},
 	})
 }

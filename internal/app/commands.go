@@ -149,7 +149,7 @@ func (a *application) runGuard(ctx context.Context, args []string, reminder bool
 		if !ok {
 			return a.usageError("--agent must be human or one of: " + strings.Join(agentIDs(), ", "))
 		}
-		if spec.HooksFormat == agent.HookFormatNone || spec.HooksFormat == agent.HookFormatCode {
+		if spec.Hooks.Format == agent.DialectNone || spec.Hooks.Format == agent.DialectCode {
 			return a.usageError(fmt.Sprintf("agent %q has no declarative hook envelope", *agentName))
 		}
 	}

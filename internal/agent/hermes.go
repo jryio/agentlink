@@ -12,29 +12,34 @@ func init() {
 		ConfigDir:    "",
 		GlobalDir:    "~/.hermes",
 		Instructions: []string{"AGENTS.md"},
-		SkillsDir:    "",
-		NativeAgents: false,
-		SkillKeys: []string{
-			"name", "description", "version", "author", "license", "platforms",
-			"metadata", "required_environment_variables", "required_credential_files",
-			"prerequisites",
+		Skills: SkillSpec{
+			NativeAgents: false,
+			Keys: []string{
+				"name", "description", "version", "author", "license", "platforms",
+				"metadata", "required_environment_variables", "required_credential_files",
+				"prerequisites",
+			},
 		},
-		HooksFormat:   HookFormatYAML,
-		HooksShape:    ShapeFlat,
-		HooksWrapper:  WrapperSettings,
-		HookEventCase: CaseSnake,
-		HookEventMap: map[string]string{
-			"PreToolUse":   "pre_tool_call",
-			"PostToolUse":  "post_tool_call",
-			"SessionStart": "on_session_start",
-			"SessionEnd":   "on_session_end",
+		Hooks: HookSpec{
+			Format:    DialectYAML,
+			Shape:     ShapeFlat,
+			Wrapper:   WrapperSettings,
+			EventCase: CaseSnake,
+			EventMap: map[string]string{
+				"PreToolUse":   "pre_tool_call",
+				"PostToolUse":  "post_tool_call",
+				"SessionStart": "on_session_start",
+				"SessionEnd":   "on_session_end",
+			},
+			Events: []string{
+				"pre_tool_call", "post_tool_call", "on_session_start",
+				"on_session_end", "subagent_start", "subagent_stop",
+			},
 		},
-		HookEvents: []string{
-			"pre_tool_call", "post_tool_call", "on_session_start",
-			"on_session_end", "subagent_start", "subagent_stop",
+		MCP: MCPSpec{
+			Format:   DialectYAML,
+			TableKey: "mcp_servers",
+			EnvField: "env",
 		},
-		MCPFormat:   MCPFormatYAML,
-		MCPTableKey: "mcp_servers",
-		MCPEnvField: "env",
 	})
 }

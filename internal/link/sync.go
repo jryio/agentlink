@@ -142,9 +142,9 @@ func validateOperationTargets(operations []Operation) error {
 
 func copyAllowed(pair config.Pair) bool {
 	if pair.Sync != "" {
-		return pair.Sync == "copy" || pair.Sync == "translate"
+		return pair.Sync == config.SyncCopy || pair.Sync == config.SyncTranslate
 	}
-	return pair.Normalizer == "" || pair.Normalizer == "exact" || pair.Normalizer == "text"
+	return pair.Normalizer == "" || pair.Normalizer == config.NormalizerExact || pair.Normalizer == config.NormalizerText
 }
 
 func needsCopy(finding Finding, from Side) bool {
@@ -245,7 +245,7 @@ func (e *Engine) operationFor(pair config.Pair, finding Finding, from Side, prun
 	if finding.State != StateDifferent && (finding.State != StateMissing || finding.Peer != otherID) {
 		return Operation{}, false, ""
 	}
-	if finding.Relative == "." && pair.Kind == "tree" {
+	if finding.Relative == "." && pair.Kind == config.KindTree {
 		operation.Kind = OperationMkdir
 		operation.Source = ""
 		return operation, true, ""
@@ -254,14 +254,26 @@ func (e *Engine) operationFor(pair config.Pair, finding Finding, from Side, prun
 		return Operation{}, false, reason
 	}
 	operation.Kind = OperationCopy
-	if pair.Sync == "translate" {
-		formatter, ok := format.For(pair.Normalizer)
+	if pair.Sync == config.SyncTranslate {
+		formatter, ok := format.For(string(pair.Normalizer))
 		if !ok {
-			return Operation{}, false, "no formatter for kind " + pair.Normalizer
+			return Operation{}, false, "no formatter for kind " + string(pair.Normalizer)
 		}
 		data, mode, err := sourceRoot.ReadFile(operation.sourcePath, e.doc.Config.MaxFileSize())
 		if err != nil {
 			return Operation{}, false, "read translate source: " + err.Error()
+		}
+		// The source may be either peer, not only the canonical hub: a spoke
+		// document must be canonicalized before the target formatter runs, or
+		// spoke wrappers and renamed fields would be misread as canonical
+		// content and clobber the target.
+		sourceSpec, ok := agent.Get(string(from))
+		if !ok {
+			return Operation{}, false, "unknown sync source agent " + string(from)
+		}
+		canonical, err := formatter.Canonicalize(sourceSpec, data)
+		if err != nil {
+			return Operation{}, false, "canonicalize " + string(pair.Normalizer) + " source: " + err.Error()
 		}
 		var existing []byte
 		targetMode := mode // new files inherit the source mode
@@ -276,11 +288,11 @@ func (e *Engine) operationFor(pair config.Pair, finding Finding, from Side, prun
 			return Operation{}, false, "read translate target: " + readErr.Error()
 		}
 		targetSpec, _ := agent.Get(otherID)
-		translated, warnings, err := formatter.Format(data, existing, targetSpec)
+		translated, warnings, err := formatter.Format(canonical, existing, targetSpec)
 		if err != nil {
-			return Operation{}, false, "translate " + pair.Normalizer + ": " + err.Error()
+			return Operation{}, false, "translate " + string(pair.Normalizer) + ": " + err.Error()
 		}
-		operation.Transform = pair.Normalizer
+		operation.Transform = string(pair.Normalizer)
 		operation.Detail = strings.Join(warnings, "; ")
 		operation.data = translated
 		operation.mode = targetMode

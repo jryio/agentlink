@@ -6,26 +6,32 @@ package agent
 // rooted at the home directory.
 func init() {
 	Register(Spec{
-		ID:            "kimi",
-		DocsURL:       "https://moonshotai.github.io/kimi-cli",
-		DisplayNames:  []string{"Kimi"},
-		ConfigDir:     ".kimi",
-		GlobalDir:     "~/.kimi",
-		Instructions:  []string{"AGENTS.md"},
-		SkillsDir:     ".kimi/skills",
-		NativeAgents:  true,
-		SkillKeys:     []string{"name", "description", "license", "compatibility", "metadata", "type"},
-		HooksFormat:   HookFormatTOML,
-		HooksShape:    ShapeList,
-		HooksWrapper:  WrapperSettings,
-		HookEventCase: CasePascal,
-		HookEvents: []string{
-			"PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit",
-			"Stop", "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop",
-			"PreCompact", "PostCompact", "Notification",
+		ID:           "kimi",
+		DocsURL:      "https://moonshotai.github.io/kimi-cli",
+		DisplayNames: []string{"Kimi"},
+		ConfigDir:    ".kimi",
+		GlobalDir:    "~/.kimi",
+		Instructions: []string{"AGENTS.md"},
+		Skills: SkillSpec{
+			Dir:          ".kimi/skills",
+			NativeAgents: true,
+			Keys:         []string{"name", "description", "license", "compatibility", "metadata", "type"},
 		},
-		MCPFormat:   MCPFormatJSON,
-		MCPTableKey: "mcpServers",
-		MCPEnvField: "env",
+		Hooks: HookSpec{
+			Format:    DialectTOML,
+			Shape:     ShapeList,
+			Wrapper:   WrapperSettings,
+			EventCase: CasePascal,
+			Events: []string{
+				"PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit",
+				"Stop", "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop",
+				"PreCompact", "PostCompact", "Notification",
+			},
+		},
+		MCP: MCPSpec{
+			Format:   DialectJSON,
+			TableKey: "mcpServers",
+			EnvField: "env",
+		},
 	})
 }

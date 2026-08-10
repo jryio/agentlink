@@ -10,13 +10,18 @@ import (
 	"github.com/jryio/agentlink/internal/agent"
 )
 
-// Formatter translates a canonical .agents artifact into one target agent's
-// native shape. existing carries the current target file bytes (nil when the
-// file does not exist) so formats embedded in larger documents can merge
-// instead of replace. Warnings report dropped events or keys a target cannot
-// express; translation never fabricates values.
+// Formatter translates artifacts between the canonical .agents shape and one
+// agent's native shape, in both directions. Canonicalize converts a document
+// in self's native shape into canonical bytes; Format renders canonical
+// bytes into the target's native shape. Comparison and sync share these two
+// operations so a spoke can serve as a sync source as safely as the hub.
+// existing carries the current target file bytes (nil when the file does not
+// exist) so formats embedded in larger documents can merge instead of
+// replace. Warnings report dropped events or keys a target cannot express;
+// translation never fabricates values.
 type Formatter interface {
 	Kind() string
+	Canonicalize(self agent.Spec, data []byte) ([]byte, error)
 	Format(canonical, existing []byte, target agent.Spec) (out []byte, warnings []string, err error)
 }
 
