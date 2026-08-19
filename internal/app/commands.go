@@ -28,6 +28,7 @@ func agentIDs() []string {
 
 func (a *application) runCheck(ctx context.Context, args []string) error {
 	flags := newFlagSet("check")
+	repos := flags.String("repos", "", "run in every child repository (directory containing .git) under DIR")
 	var pairs stringList
 	flags.Var(&pairs, "pair", "check only this pair (repeatable)")
 	if err := flags.Parse(args); err != nil {
@@ -35,6 +36,9 @@ func (a *application) runCheck(ctx context.Context, args []string) error {
 	}
 	if flags.NArg() != 0 {
 		return a.usageError("check does not accept positional arguments")
+	}
+	if *repos != "" {
+		return a.runCheckRepos(ctx, *repos, pairs)
 	}
 	return a.withEngine(func(doc *config.Document, engine *link.Engine) error {
 		selected, err := selectedPairs(&doc.Config, pairs, true)
@@ -62,6 +66,7 @@ func (a *application) runSync(ctx context.Context, args []string) error {
 	from := flags.String("from", "", "agent to sync from (a registered agent ID, e.g. agents, claude, codex)")
 	apply := flags.Bool("apply", false, "apply the displayed plan")
 	prune := flags.Bool("prune", false, "delete target-only files (requires --apply to mutate)")
+	repos := flags.String("repos", "", "run in every child repository (directory containing .git) under DIR")
 	var pairs stringList
 	flags.Var(&pairs, "pair", "sync only this pair (repeatable)")
 	if err := flags.Parse(args); err != nil {
@@ -72,6 +77,9 @@ func (a *application) runSync(ctx context.Context, args []string) error {
 	}
 	if _, ok := agent.Get(*from); !ok {
 		return a.usageError("sync requires --from <agent> (one of: " + strings.Join(agentIDs(), ", ") + ")")
+	}
+	if *repos != "" {
+		return a.runSyncRepos(ctx, *repos, link.Side(*from), *apply, *prune, pairs)
 	}
 	return a.withEngine(func(doc *config.Document, engine *link.Engine) error {
 		selected, err := selectedPairs(&doc.Config, pairs, false)
@@ -215,7 +223,11 @@ func (a *application) runList(args []string) error {
 	for _, pair := range doc.Config.Pairs {
 		ids := pair.PeerIDs()
 		left, right := pair.Peers[ids[0]], pair.Peers[ids[1]]
-		output.printf("  %-18s %-4s %s:%s ↔ %s:%s\n", pair.ID, pair.Kind, escapeTerminal(ids[0]+"/"+left.Source), escapeTerminal(left.Path), escapeTerminal(ids[1]+"/"+right.Source), escapeTerminal(right.Path))
+		baseNote := ""
+		if pair.Base != "" {
+			baseNote = " base=" + pair.Base
+		}
+		output.printf("  %-18s %-4s %s:%s ↔ %s:%s%s\n", pair.ID, pair.Kind, escapeTerminal(ids[0]+"/"+left.Source), escapeTerminal(left.Path), escapeTerminal(ids[1]+"/"+right.Source), escapeTerminal(right.Path), baseNote)
 	}
 	if len(doc.Config.MCPServers) > 0 {
 		output.println("\nMCP wiring")
@@ -431,8 +443,12 @@ func (a *application) runAdopt(ctx context.Context, args []string) error {
 	return nil
 }
 
-func (a *application) withEngine(fn func(*config.Document, *link.Engine) error) (err error) {
-	doc, err := a.loadDocument()
+func (a *application) withEngineAt(cwd string, fn func(*config.Document, *link.Engine) error) (err error) {
+	path, err := config.Find(a.global.config, cwd)
+	if err != nil {
+		return err
+	}
+	doc, err := config.Load(path, cwd)
 	if err != nil {
 		return err
 	}
@@ -446,6 +462,10 @@ func (a *application) withEngine(fn func(*config.Document, *link.Engine) error) 
 		return err
 	}
 	return fn(doc, engine)
+}
+
+func (a *application) withEngine(fn func(*config.Document, *link.Engine) error) error {
+	return a.withEngineAt(a.streams.CWD, fn)
 }
 
 func (a *application) loadDocument() (*config.Document, error) {

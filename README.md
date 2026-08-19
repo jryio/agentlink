@@ -86,6 +86,106 @@ must be a regular file or directory inside the project. Relative links inside a
 copied tree are dereferenced only when they stay inside the project; external
 links and an unmanaged linked root are refused.
 
+## Configure hierarchies
+
+Agentlink searches from the working directory toward the filesystem root. It
+uses the first `agentlink.yaml` that it finds. Parent and child configuration
+files do not merge.
+
+### Shared library for sibling repositories
+
+Place a shared skill library and its configuration above related repositories:
+
+```text
+cloudx/
+├── agentlink.yaml                 # shared configuration
+├── skills/
+│   └── review/
+│       └── SKILL.md
+├── api/
+│   └── .agents/
+│       └── skills/                # materialized shared skills and local skills
+└── web/
+    └── .agents/
+        └── skills/
+```
+
+Put this configuration in `cloudx/agentlink.yaml`:
+
+```yaml
+version: 2
+
+sources:
+  shared:
+    root: skills
+  project:
+    root: .
+    relative_to: cwd
+
+pairs:
+  - id: cloudx-skills
+    kind: tree
+    base: agents
+    peers:
+      agents: {source: shared, path: .}
+      codex: {source: project, path: .agents/skills}
+    normalizer: skill
+    sync: copy
+```
+
+Run these commands from `cloudx/`:
+
+```sh
+agentlink check --repos .
+agentlink sync --repos . --from agents --apply
+```
+
+The shared library supplies required skills. A repository can keep extra
+skills in `.agents/skills`; `base: agents` leaves those files unmanaged.
+
+### Repository configuration that shadows its parent
+
+Give a repository its own configuration when its agent setup differs:
+
+```text
+cloudx/
+├── agentlink.yaml                 # applies to repositories without a local config
+├── api/
+│   ├── .git/
+│   ├── agentlink.yaml             # selected for commands in api/
+│   ├── .agents/
+│   │   └── skills/
+│   └── .claude/
+│       └── skills/
+└── web/
+    └── .git/
+```
+
+Put this configuration in `cloudx/api/agentlink.yaml`:
+
+```yaml
+version: 2
+
+sources:
+  project:
+    root: .
+    relative_to: cwd
+
+pairs:
+  - id: api-skills
+    kind: tree
+    peers:
+      agents: {source: project, path: .agents/skills}
+      claude: {source: project, path: .claude/skills}
+    normalizer: skill
+    sync: copy
+```
+
+Run `agentlink check` from `cloudx/api/` to use the repository configuration.
+`agentlink check --repos cloudx/` also uses it for `api/`. Add every pair that
+the repository needs because the local file replaces, rather than extends, the
+parent configuration.
+
 ## Normalizers
 
 Each agent expresses the same intent differently: headings name the tool, and
@@ -188,7 +288,9 @@ See [Configuration](docs/configuration.md) for the full schema.
 ```text
 agentlink                 check all configured peers
 agentlink check           check all configured peers
+agentlink check --repos DIR check every repository below DIR
 agentlink check --pair ID check one peer
+agentlink sync --repos DIR preview or apply one-way sync in each repository
 agentlink sync            preview or apply one-way sync
 agentlink guard           reject drifting changed paths
 agentlink adopt            preview moving selected configuration into .agents

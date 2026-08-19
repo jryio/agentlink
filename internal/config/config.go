@@ -102,9 +102,13 @@ const (
 // Pair maps two agents' peer artifacts. Peers is keyed by registered agent ID
 // (see internal/agent); the canonical hub store uses the reserved ID "agents".
 type Pair struct {
-	ID         string              `yaml:"id" json:"id"`
-	Name       string              `yaml:"name,omitempty" json:"name,omitempty"`
-	Kind       Kind                `yaml:"kind" json:"kind"`
+	ID   string `yaml:"id" json:"id"`
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	Kind Kind   `yaml:"kind" json:"kind"`
+	// Base names the peer whose tree is the authoritative layer. Files under
+	// the base tree must exist and match on the other peer; files present only
+	// on the other peer are unmanaged. Empty means symmetric comparison.
+	Base       string              `yaml:"base,omitempty" json:"base,omitempty"`
 	Peers      map[string]Endpoint `yaml:"peers" json:"peers"`
 	Normalizer Normalizer          `yaml:"normalizer,omitempty" json:"normalizer,omitempty"`
 	Sync       SyncMode            `yaml:"sync,omitempty" json:"sync,omitempty"`
@@ -299,6 +303,14 @@ func (c *Config) Validate() error {
 		case KindFile, KindTree, KindSiblings:
 		default:
 			errs = append(errs, fmt.Errorf("%s.kind: must be file, tree, or siblings", prefix))
+		}
+		if pair.Base != "" {
+			if _, ok := pair.Peers[pair.Base]; !ok {
+				errs = append(errs, fmt.Errorf("%s.base: must name one of the pair's peers", prefix))
+			}
+			if pair.Kind != KindTree {
+				errs = append(errs, fmt.Errorf("%s.base: requires kind: tree", prefix))
+			}
 		}
 		if !validNormalizer(pair.Normalizer) {
 			errs = append(errs, fmt.Errorf("%s.normalizer: must be exact, text, instructions, skill, hook, or presence", prefix))

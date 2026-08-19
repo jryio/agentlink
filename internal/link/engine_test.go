@@ -81,6 +81,44 @@ func TestEngineEndToEnd(t *testing.T) {
 	}
 }
 
+func TestBasePairTreatsExtraFilesAsUnmanaged(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	review := "---\nname: review\ndescription: Shared review\n---\nBody.\n"
+	writeTestFile(t, filepath.Join(dir, "shared", "skills", "review", "SKILL.md"), review)
+	writeTestFile(t, filepath.Join(dir, "repo", "skills", "review", "SKILL.md"), review)
+	writeTestFile(t, filepath.Join(dir, "repo", "skills", "local", "SKILL.md"), "---\nname: local\ndescription: Local review\n---\nBody.\n")
+	engine, closeEngine := newEngine(t, basePairDocument(dir))
+	t.Cleanup(closeEngine)
+
+	if report := engine.Check(t.Context(), nil); !report.Clean() {
+		t.Fatalf("Check() = %+v, want clean with unmanaged local skill", report)
+	}
+
+	writeTestFile(t, filepath.Join(dir, "repo", "skills", "review", "SKILL.md"), review+"Changed.\n")
+	report := engine.Check(t.Context(), nil)
+	if report.FindingCount() != 1 || report.Pairs[0].Findings[0].State != StateDifferent {
+		t.Fatalf("Check(modified base file) = %+v, want one different finding", report)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "repo", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("os.Remove(repo review): %v", err)
+	}
+	report = engine.Check(t.Context(), nil)
+	if report.FindingCount() != 1 || report.Pairs[0].Findings[0].State != StateMissing || report.Pairs[0].Findings[0].Peer != "codex" {
+		t.Fatalf("Check(missing base file) = %+v, want one missing codex finding", report)
+	}
+
+	if err := os.RemoveAll(filepath.Join(dir, "shared", "skills")); err != nil {
+		t.Fatalf("os.RemoveAll(shared skills): %v", err)
+	}
+	report = engine.Check(t.Context(), nil)
+	if report.FindingCount() != 1 || report.Pairs[0].Findings[0].Relative != "." || report.Pairs[0].Findings[0].State != StateMissing || report.Pairs[0].Findings[0].Peer != "agents" || !strings.Contains(report.Pairs[0].Findings[0].Detail, "base tree is missing") {
+		t.Fatalf("Check(missing base tree) = %+v, want base tree missing finding", report)
+	}
+}
+
 func TestEngineExceptionDocumentsDivergence(t *testing.T) {
 	t.Parallel()
 
@@ -419,6 +457,18 @@ func testDocument(dir string) *config.Document {
 			},
 		},
 	}
+}
+
+func basePairDocument(dir string) *config.Document {
+	doc := testDocument(dir)
+	doc.Config.Pairs = []config.Pair{{
+		ID: "skills", Kind: config.KindTree, Base: "agents", Normalizer: config.NormalizerSkill, Sync: config.SyncCopy,
+		Peers: map[string]config.Endpoint{
+			"agents": {Source: "workspace", Path: "shared/skills"},
+			"codex":  {Source: "workspace", Path: "repo/skills"},
+		},
+	}}
+	return doc
 }
 
 func writeTestFile(t testing.TB, path, contents string) {

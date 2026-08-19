@@ -28,6 +28,35 @@ func TestGuardDifferentPeerNamesBothCounterparts(t *testing.T) {
 	}
 }
 
+func TestGuardAllowsUnmanagedBasePairPaths(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	review := "---\nname: review\ndescription: Shared review\n---\nBody.\n"
+	writeTestFile(t, filepath.Join(dir, "shared", "skills", "review", "SKILL.md"), review)
+	writeTestFile(t, filepath.Join(dir, "repo", "skills", "review", "SKILL.md"), review)
+	writeTestFile(t, filepath.Join(dir, "repo", "skills", "local", "SKILL.md"), "---\nname: local\ndescription: Local review\n---\nBody.\n")
+	engine, closeEngine := newEngine(t, basePairDocument(dir))
+	t.Cleanup(closeEngine)
+
+	violations, err := engine.Guard(t.Context(), []string{"repo/skills/local/SKILL.md"})
+	if err != nil {
+		t.Fatalf("Guard(unmanaged local skill): %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Guard(unmanaged local skill) = %+v, want no violations", violations)
+	}
+
+	writeTestFile(t, filepath.Join(dir, "repo", "skills", "review", "SKILL.md"), review+"Changed.\n")
+	violations, err = engine.Guard(t.Context(), []string{"repo/skills/review/SKILL.md"})
+	if err != nil {
+		t.Fatalf("Guard(modified base skill): %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("Guard(modified base skill) = %+v, want one violation", violations)
+	}
+}
+
 func TestEndpointRelativeIncludesTreeRoot(t *testing.T) {
 	t.Parallel()
 

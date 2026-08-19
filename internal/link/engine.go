@@ -323,11 +323,22 @@ func (e *Engine) checkTree(
 		return report
 	}
 	paths := make(map[string]struct{}, len(leftFiles)+len(rightFiles))
-	for rel := range leftFiles {
-		paths[rel] = struct{}{}
-	}
-	for rel := range rightFiles {
-		paths[rel] = struct{}{}
+	switch pair.Base {
+	case runtime.left:
+		for rel := range leftFiles {
+			paths[rel] = struct{}{}
+		}
+	case runtime.right:
+		for rel := range rightFiles {
+			paths[rel] = struct{}{}
+		}
+	default:
+		for rel := range leftFiles {
+			paths[rel] = struct{}{}
+		}
+		for rel := range rightFiles {
+			paths[rel] = struct{}{}
+		}
 	}
 	relativePaths := mapsKeys(paths)
 	slices.Sort(relativePaths)
@@ -355,7 +366,11 @@ func (e *Engine) checkTree(
 		if !leftExists {
 			missing = runtime.left
 		}
-		report.Findings = append(report.Findings, e.finding(runtime, ".", StateMissing, missing, leftRoot, rightRoot, "empty counterpart tree is missing"))
+		detail := "empty counterpart tree is missing"
+		if pair.Base != "" && missing == pair.Base {
+			detail = "base tree is missing"
+		}
+		report.Findings = append(report.Findings, e.finding(runtime, ".", StateMissing, missing, leftRoot, rightRoot, detail))
 	}
 	return report
 }

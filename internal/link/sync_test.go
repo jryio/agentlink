@@ -60,6 +60,34 @@ func TestPlanSyncChecksOnlyArtifactPairs(t *testing.T) {
 	}
 }
 
+func TestSyncBasePairDoesNotPruneUnmanaged(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "shared", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: Shared review\n---\nBody.\n")
+	local := filepath.Join(dir, "repo", "skills", "local", "SKILL.md")
+	writeTestFile(t, local, "---\nname: local\ndescription: Local review\n---\nBody.\n")
+	engine, closeEngine := newEngine(t, basePairDocument(dir))
+	t.Cleanup(closeEngine)
+
+	plan, err := engine.PlanSync(t.Context(), Side("agents"), true, nil)
+	if err != nil {
+		t.Fatalf("PlanSync(): %v", err)
+	}
+	if len(plan.Operations) != 1 || plan.Operations[0].Kind != OperationCopy || plan.Operations[0].Relative != "review/SKILL.md" {
+		t.Fatalf("PlanSync() = %+v, want one review copy", plan)
+	}
+	if err := engine.Apply(t.Context(), plan); err != nil {
+		t.Fatalf("Apply(): %v", err)
+	}
+	if report := engine.Check(t.Context(), nil); !report.Clean() {
+		t.Fatalf("post-Apply Check() = %+v, want clean", report)
+	}
+	if _, err := os.Stat(local); err != nil {
+		t.Fatalf("os.Stat(local skill): %v", err)
+	}
+}
+
 func TestSingleFileReportCountsMissingPeer(t *testing.T) {
 	t.Parallel()
 

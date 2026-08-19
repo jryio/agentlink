@@ -32,6 +32,13 @@ func TestConfigValidateFailures(t *testing.T) {
 		{"invalid kind", func(c *Config) { c.Pairs[0].Kind = "directory" }, "must be file, tree, or siblings"},
 		{"invalid normalizer", func(c *Config) { c.Pairs[0].Normalizer = "magic" }, "normalizer"},
 		{"invalid sync policy", func(c *Config) { c.Pairs[0].Sync = "merge" }, "sync"},
+		{"base names non-peer", func(c *Config) {
+			c.Pairs[0].Kind = KindTree
+			c.Pairs[0].Base = "gemini"
+		}, "base: must name one of the pair's peers"},
+		{"base on non-tree pair", func(c *Config) {
+			c.Pairs[0].Base = "claude"
+		}, "base: requires kind: tree"},
 		{"single peer", func(c *Config) {
 			c.Pairs[0].Peers = map[string]Endpoint{"claude": {Source: "root", Path: "CLAUDE.md"}}
 		}, "exactly two agents"},
@@ -152,6 +159,17 @@ func TestConfigAccessors(t *testing.T) {
 	}
 	if got := cfg.MaxFiles(); got != hardMaxFiles {
 		t.Errorf("ceiling MaxFiles() = %d, want %d", got, hardMaxFiles)
+	}
+}
+
+func TestValidateAcceptsBasePair(t *testing.T) {
+	t.Parallel()
+
+	cfg := validConfig()
+	cfg.Pairs[0].Kind = KindTree
+	cfg.Pairs[0].Base = "claude"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid base pair Config.Validate(): %v", err)
 	}
 }
 

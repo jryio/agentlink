@@ -242,6 +242,9 @@ func assertExitCode(t testing.TB, err error, want int) {
 
 func writeAppFile(t testing.TB, path, contents string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("os.MkdirAll(%q): %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("os.WriteFile(%q): %v", path, err)
 	}

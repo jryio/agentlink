@@ -111,6 +111,10 @@
         "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
         "name": {"type": "string"},
         "kind": {"type": "string", "enum": ["file", "tree", "siblings"]},
+        "base": {
+          "type": "string",
+          "description": "Peer ID whose tree is the base layer: its files must exist and match on the other peer; files only on the other peer are unmanaged (no drift, never pruned). Requires kind: tree."
+        },
         "peers": {
           "type": "object",
           "minProperties": 2,

@@ -214,6 +214,10 @@ Safe sync:
   agentlink sync --from agents --apply    # copy missing/drifting files
   agentlink sync --from claude --prune --apply
 
+Multi-repo:
+  agentlink check --repos ~/code/cloudx
+  agentlink sync  --repos ~/code/cloudx --from agents --apply
+
 Adopt existing configuration:
   agentlink adopt --from .claude/skills
   agentlink adopt --from .claude/skills --apply

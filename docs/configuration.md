@@ -101,6 +101,31 @@ canonicalized first, so either peer — not just the `.agents` hub — can be
 `--from`: a claude settings file synced to the hub lands as a bare canonical
 hooks document, not as a settings dump. Translation never fabricates values.
 
+### Base pairs
+
+Set `base: <peer-id>` on a `kind: tree` pair to make one peer's tree the
+authoritative layer. Every base file must exist and match on the other peer.
+Files only on the other peer are unmanaged.
+
+For example, a shared skill library can materialize into each repository's
+`.agents/skills`:
+
+```yaml
+pairs:
+  - id: cloudx-skills
+    kind: tree
+    base: agents
+    peers:
+      agents: {source: shared, path: .}
+      codex: {source: project, path: .agents/skills}
+    normalizer: skill
+    sync: copy
+```
+
+Unmanaged files are never pruned. Use `exceptions` to document an intentional
+repository-side override of a base file. `base` must name one of the pair's
+peers.
+
 ## Ignore and exceptions
 
 Globs use `/`. `*` matches one path component. `**` crosses directories and
