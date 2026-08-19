@@ -64,6 +64,58 @@ source artifact is rewritten into the target's native shape — frontmatter keys
 are dropped or renamed, hook events are mapped, settings files are merged
 rather than replaced.
 
+When no agent-specific files exist, `agentlink init` writes this complete
+starter configuration:
+
+```yaml
+# yaml-language-server: $schema=./agentlink.schema.json
+# Canonical artifacts live in .agents (and AGENTS.md). Most agents read
+# .agents/skills natively. Other agents need an activation or pair here.
+version: 2
+
+sources:
+  project:
+    root: .
+    relative_to: config
+
+pairs:
+  - id: project-instructions
+    name: Project instructions
+    kind: siblings
+    peers:
+      agents: {source: project, path: AGENTS.md}
+      claude: {source: project, path: CLAUDE.md}
+    normalizer: instructions
+    sync: translate
+    optional: true
+
+  - id: project-skills
+    name: Project skills
+    kind: tree
+    peers:
+      agents: {source: project, path: .agents/skills}
+      claude: {source: project, path: .claude/skills}
+    normalizer: skill
+    sync: translate
+    optional: true
+
+# mcp_servers: peer the canonical .agents/mcp.json against an agent's MCP
+# file to compare server wiring (command/args/transport/url and environment
+# key names — never secret values). See docs/configuration.md.
+#
+# Agents with global-only configuration (hermes; kimi hooks/MCP) pair through a
+# source rooted at your home directory instead of the project.
+ignore:
+  - "**/.DS_Store"
+  - "**/.git/**"
+  - "**/.hg/**"
+  - "**/.svn/**"
+  - "**/cache/**"
+  - "**/node_modules/**"
+  - "**/tmp/**"
+  - "**/vendor/**"
+```
+
 ## Adopt an existing project
 
 Move any project-relative agent configuration file or directory into `.agents`
